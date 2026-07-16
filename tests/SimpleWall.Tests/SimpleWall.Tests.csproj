@@ -14,4 +14,11 @@
   <ItemGroup>
     <ProjectReference Include="../../src/SimpleWall/SimpleWall.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- LibVLCSharp's Core.Initialize() locates libvlc's natives relative to the running
+         assembly. The test runner shadow-copies assemblies to a temp directory, leaving
+         libvlc\win-x64\ behind, so LibVlcContractTests cannot find libvlc at all. Turning
+         shadow copying off puts the tests in the same layout production runs in. -->
+    <None Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

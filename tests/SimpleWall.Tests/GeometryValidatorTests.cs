@@ -18,6 +18,43 @@ namespace SimpleWall.Tests
             Assert.Equal(saved, GeometryValidator.Validate(saved, TwoScreens, Primary));
         }
 
+        /// <summary>
+        /// A fresh install has no config, so the whole rectangle arrives as zeros. That must
+        /// land on the WALL. This is the exact shape of the bug spike finding 1 exists to warn
+        /// about: 0,0 is the operator's desktop, and it survives Validate untouched because it
+        /// genuinely does overlap the primary screen -- so the wall stays dark while a black
+        /// rectangle sits on the wrong monitor, looking exactly like the app failed to start.
+        /// </summary>
+        [Fact]
+        public void UnconfiguredGeometryResolvesOntoTheWallNotTheDesktop()
+        {
+            var fresh = new Rectangle(0, 0, 0, 0); // what a brand-new WallConfig holds
+
+            var resolved = GeometryValidator.Resolve(fresh, TwoScreens, Primary);
+
+            Assert.Equal(LedWall.X, resolved.X);
+            Assert.False(Primary.IntersectsWith(resolved), "first run must not open on the operator's desktop");
+        }
+
+        [Fact]
+        public void ResolveKeepsRealSavedGeometryIncludingDeliberateOverhang()
+        {
+            // 1964 deliberately exceeds the 1920 panel -- never clamped. See fact 2.
+            var saved = new Rectangle(1920, 0, 1964, 256);
+            Assert.Equal(saved, GeometryValidator.Resolve(saved, TwoScreens, Primary));
+        }
+
+        [Fact]
+        public void ResolveFallsBackToPrimaryWhenItIsTheOnlyScreen()
+        {
+            var singleScreen = new[] { Primary };
+
+            var resolved = GeometryValidator.Resolve(new Rectangle(0, 0, 0, 0), singleScreen, Primary);
+
+            Assert.Equal(Primary.X, resolved.X);
+            Assert.True(resolved.Width > 0 && resolved.Height > 0);
+        }
+
         [Fact]
         public void GeometryOnAMissingScreenSnapsToPrimary()
         {

@@ -10,6 +10,11 @@ namespace SimpleWall.Tests
         public int? CurrentSlot { get; set; }
         public bool IsPlaying { get; set; }
         public event EventHandler StateChanged;
+        public event EventHandler<ClipUnavailableEventArgs> ClipUnavailable;
+
+        /// <summary>Lets a test drive the "operator pressed a dead button" path.</summary>
+        public void RaiseClipUnavailable(int slot, string path, string reason) =>
+            ClipUnavailable?.Invoke(this, new ClipUnavailableEventArgs(slot, path, reason));
 
         public void Execute(WallCommand command)
         {

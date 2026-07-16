@@ -1,7 +1,7 @@
 # simple-wall — where things stand
 
 **Last updated:** 2026-07-17, session 2
-**Tests:** 78 passing, 0 failing
+**Tests:** 93 passing, 0 failing (~25s — the libvlc contract tests drive real playback)
 **Branch:** `master` (user explicitly consented to committing straight to master)
 
 ## Read these first, in this order
@@ -23,7 +23,7 @@
 | 6 | Scheduler due-calculation | ✅ done |
 | 7 | OSC message parsing | ✅ done |
 | 8 | Output geometry validation | ✅ done |
-| 9 | Real VLC engine + output window | blocked on nothing; **spec changed by the spike, see below** |
+| 9 | Real VLC engine + output window | ✅ done — **except the spike deletion, which moved to Task 10** |
 | 10 | Clip grid UI | pending |
 | 11 | Transport + image adjustment UI | pending |
 | 12 | OSC listener + reply | pending |
@@ -31,9 +31,15 @@
 | 14 | Settings, autostart, logging | pending |
 | 15 | Packaging + Win7 acceptance | pending |
 
-**Next action: Task 9 (real VLC engine + output window).** The biggest remaining task, and the spike rewrote its spec — read "The spike changed the design" below before writing a line of it. It also deletes `src/SimpleWall/Spike/`.
+**Next action: Task 10 (clip grid UI).** It now carries three things beyond its own spec:
+
+1. **Delete `src/SimpleWall/Spike/`** and point `Program.Main` at the real control window + `VlcWallEngine`. Task 9 deliberately did NOT delete the spike: `Program.Main` runs `SpikeForm` and `Program.LogCrash` uses `SpikeLogPaths`, so deleting it before a real window exists would leave the app with nothing to run and no crash log. **Nothing in Task 9 is reachable from the shipped app until this happens** — `VlcWallEngine`/`OutputWindow` are built and tested but nothing calls them, and `Program.Main` still runs the old spike with its own stale VLC setup.
+2. **Render the window with `tools/RenderShot` and look at the PNG** before calling it done.
+3. **Build the control tree in the constructor, not in `Load`** — anything added in `Load` is invisible to RenderShot and it cannot tell, so it would report a clean render of a window missing half its controls.
 
 Task 7 notes: the trap was real and the plan's own sample code fell into it — `IsButtonRelease` ran before the address switch, swallowing `/brightness 0`. The fix is structural: the release guard now lives in `Trigger()`, which wraps only the valueless addresses; `/brightness` and `/contrast` never see it, because `0` is data there. Both structures were run against the tests to prove the guard bites.
+
+Task 9 notes: brightness/contrast are written to the **in-memory** `WallConfig` but never saved — one atomic file write per OSC packet, at ~100 packets/sec on a fader sweep, is not a thing to do. **Task 14 owes the actual persistence** (debounced, or at exit).
 
 ## How to build and test (nothing builds on the Mac)
 
@@ -45,6 +51,10 @@ ssh wallvm 'cmd /c "pushd \\Mac\Home\Documents\Coding\simple-wall && dotnet test
 - The VM is **French**: `échec : 0` = ZERO failures (good), `réussite : 54` = 54 passed, `La génération a réussi` = build ok.
 - The `wallvm` SSH alias is configured (key `~/.ssh/simple-wall-vm`). SDK is per-user at `C:\Users\notjeremie\.dotnet`.
 - Known trap: the SMB share occasionally serves a stale build. If a fix "isn't taking effect", `dotnet build --no-incremental`.
+
+**libvlc RUNS ON THE VM. The engine is not as untestable as the plan assumed.** The VM is ARM64 Windows 11 running our x64 binaries under emulation, and libvlc 3.0.21 loads and plays there. No video card is needed: `--vout=dummy` plus `vlc://pause:1` (from the bundled `libidummy` plugin) gives real playback with real events and a real duration. `LibVlcContractTests` uses this to prove things that were previously only reasoned about. Reach for this before declaring anything about libvlc unverifiable — it took ten minutes to set up and it immediately disproved one of my own claims. Note `xunit.runner.json` sets `shadowCopy: false`, without which `Core.Initialize()` cannot find the natives.
+
+Two limits worth knowing: `--vout=dummy` never increments `VoutCount` (so the swap's poll is not exercised by any test), and libvlc **silently ignores** unknown *media* options — only unknown *instance* options are fatal. So a typo in `:avcodec-hw=dxva2` costs the optimisation with no signal anywhere.
 - **If ssh times out, the VM is simply off.** `prlctl start` is Parallels Pro-only, so the user has to start it from the Parallels GUI. `prlctl list -a` reads status fine without Pro.
 - ssh occasionally answers `Permission denied (publickey)` or the share briefly vanishes (`Le chemin d'accès spécifié est introuvable`) for one call, then works again. It's flaky, not broken — retry once before investigating.
 - Reading an exit code over ssh: use `cmd /v:on /c "... & echo EXIT=!ERRORLEVEL!"`. Plain `%ERRORLEVEL%` is expanded when the line is *parsed*, so it reports the previous command's code and will happily tell you a failing command passed. Don't pipe to `findstr` either — you'd read findstr's code instead.
@@ -56,7 +66,7 @@ Measured on the real Win7 SP1 x64 wall PC, 2026-07-16. **Not guesses — three o
 1. **The LED is an EXTENDED display at X=1920**, not a mirror of the primary's top strip. Working geometry: **X=1920, Y=0, W=1964, H=256**.
 2. **Width 1964 deliberately exceeds the 1920 panel.** The clip is 1964 wide; at 1920 VLC downscales and the wall looks soft, at 1964 the overhang crops and the visible area is pixel-1:1 and sharper. **Never clamp width.**
 3. **Two layers, hard cut.** The black frame measured ~290ms (`GAP A->B: 112 ms`, `FIRST PICTURE: 286 ms`) and is plainly visible. Load the incoming clip into a hidden second layer and swap only once it has a picture, so the outgoing clip holds the wall. Still one clip at a time — layers are an implementation detail, not a feature. **The design originally cut layers on the assumption the black was brief. It isn't.**
-4. **Restart on `EndReached`.** `:input-repeat=65535` is a COUNTDOWN, not "forever", and 65535 is the option's max — a 30s clip stops after ~22 days. This app runs unattended for months. No observation would ever have caught this.
+4. **Restart on `EndReached`.** `:input-repeat=65535` is a COUNTDOWN, not "forever" — a 30s clip stops after ~22 days, and this app runs unattended for months. **Now measured, not reasoned**: `LibVlcContractTests` drives real libvlc and proves plays == repeat + 1 (`:input-repeat=0/1/3` → EndReached at 1039/2068/4100 ms). The claim that "65535 is the option's max" was **wrong** and has been removed: libvlc accepts 65536, 70000 and 999999 without complaint. Whether it honours them or wraps them to something *shorter* is unproven, so 65535 stays and the EndReached restart makes the question moot. This one was originally caught by reading, not observing — it is observable in about a second, and now is.
 5. **`:no-audio`.** The clips carry AAC and VLC was decoding and routing it to the sound card. Nothing ever told VLC this is a video wall.
 6. **Try `:avcodec-hw=dxva2` and measure.** VLC picks a D3D11 decoder against a Direct3D9 display, fails to insert the brightness filter across every chroma combination, tears the vout down, rebuilds on DXVA2, then works — on every play. Likely most of the 290ms.
 7. **Drop the Win7 fallbacks** (software decode, `--vout=direct3d9`/`directdraw`). Built as insurance, proven unnecessary — the default path works. Not in tension with 6: forcing the DXVA2 *decoder* is a measured optimisation; the others were guesses at a problem that didn't materialise.
@@ -71,6 +81,9 @@ Every task: **implementer → spec-compliance review → code-quality review**, 
 - I specified VLC **2.x** logging options (`--file-logging`) that make `libvlc_new` return NULL. The app would have opened a window and done nothing, forever, on arrival at the wall. A reviewer proved it with a harness.
 - I designed a config save that couldn't survive the power cut it was written for: `WriteAllText` doesn't flush, so the likely artifact is a **zero-length** file — precisely the input that skipped quarantine and then got overwritten.
 - I wrote a scheduler that skips any task whose moment falls on the other side of a midnight tick. An implementer proved it by running my own code against a test it wrote.
+- I wrote Task 9's `ApplyGeometry` to call `GeometryValidator.Validate`, so on a **first run** the config's zeros passed validation (0,0 really does overlap the primary screen) and the output window opened on the operator's desktop while the wall stayed dark — reproducing spike finding 1, the exact thing `DefaultGeometry` was built in Task 8 to prevent. `DefaultGeometry` was dead code, called by nothing but its own tests. A reviewer traced it with the real machine's screen numbers. **Unit tests all passed: the bug lived in the composition, not the parts.**
+- I wrote that adding layer B first would leave layer A in front. **Backwards** — `Controls.Add` appends and child index 0 is the front. A reviewer measured the real HWND z-order and proved the engine's `_frontIsA = true` disagreed with reality at startup. It self-healed on the first swap so it never bit, but one refactor away it stops the wrong player and shows a layer that never played anything: a black wall, no exception, no log.
+- I documented that "65535 is `:input-repeat`'s maximum". **False, and I put it in three files including this one.** A reviewer measured 65536/70000/999999 all accepted and still looping. The countdown itself is real and now proven; the ceiling was invented.
 - I clamped OSC brightness with `Math.Max(0f, Math.Min(2f, value))`, which **does not clamp `NaN`** — both methods propagate it. `/brightness NaN` off the network would have escaped the range and landed on a native VLC filter parameter, on an unattended machine, for months. A reviewer proved it on the VM's own net48 runtime rather than asserting it from memory. **Two of the three defects in this task were in the plan's sample code, not the implementation** — the plan is a draft, not a spec to type in.
 
 Implementers are explicitly told to push back rather than implement something wrong. Several did, correctly. **Keep doing this.**
@@ -103,6 +116,15 @@ re-run that and confirm it still fails. The README has the commands.
 What didn't work, so nobody re-tries it: `prlctl exec`/`prlctl start` are Parallels **Pro-only**;
 `schtasks /it` + PowerShell `CopyFromScreen` fires but never produces output (window station).
 Neither is needed now — rendering never touches a desktop.
+
+## Take this list to the wall (Task 15)
+
+Things Task 9 could not settle away from the hardware. Each has a named symptom — don't just "check it works".
+
+1. **Does the back layer's vout come up while it is occluded?** This is the load-bearing assumption of the whole two-layer design and it is unproven. Z-order *is* enough to hide the back layer (measured: both VideoViews have `WS_CLIPSIBLINGS`), but whether libvlc's D3D9 vout *initialises* against a window whose visible region is empty is reasoning, not measurement — and `--vout=dummy` never increments `VoutCount`, so no test touches it. **Symptom if wrong: every clip change waits 5s, logs "produced no picture", and the wall never changes.** That would be fatal to the design, so check it first.
+2. **Expect up to one frame (~40ms) of black at the cut**, not zero: the incoming layer's region was clipped until `BringToFront`, so its next Present is the first one that lands. Still far better than 290ms. Look for it rather than assume.
+3. **Measure `:avcodec-hw=dxva2`.** It is in on the theory that naming DXVA2 up front skips the failed D3D11 attempt the spike measured. If it misbehaves, deleting that one line in `VlcOptions.Media()` restores the proven default path. A typo there would be silent (see above) — confirm from the VLC log that it took.
+4. **The 22-day `EndReached` restart is not seamless** — nothing holds the wall while it reloads. Expect ~290ms of black once every ~22 days.
 
 ## Deliberately cut — do not re-add without asking
 

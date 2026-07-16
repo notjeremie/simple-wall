@@ -43,5 +43,13 @@ namespace SimpleWall.Engine
         /// OSC and scheduler triggers keep the grid honest.
         /// </summary>
         event EventHandler StateChanged;
+
+        /// <summary>
+        /// Raised when a command named a slot with no clip, or whose file is missing. The
+        /// wall is deliberately left untouched in that case, which means nothing on screen
+        /// would otherwise change and the operator would be left pressing a dead button with
+        /// no idea why. This event is how they find out.
+        /// </summary>
+        event EventHandler<ClipUnavailableEventArgs> ClipUnavailable;
     }
 }

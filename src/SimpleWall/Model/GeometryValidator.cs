@@ -68,6 +68,27 @@ namespace SimpleWall.Model
         }
 
         /// <summary>
+        /// The one callers should use: turns whatever is in the config into geometry to open at.
+        ///
+        /// A zero (or negative) saved width/height means "never configured" - no operator ever
+        /// asks for a zero-sized window - so that routes to <see cref="DefaultGeometry"/>, which
+        /// puts the window on the LED wall. Everything else is a real saved setting and only
+        /// gets sanity-checked by <see cref="Validate"/>.
+        ///
+        /// This distinction is the whole point, and getting it wrong is invisible until someone
+        /// is standing in front of the wall: a first run must NOT open at 0,0. The wall is an
+        /// EXTENDED display at X=1920 (fact 1 above), so 0,0 is the operator's own desktop -
+        /// and because 0,0 legitimately overlaps the primary screen, <see cref="Validate"/>
+        /// would happily pass it through as a perfectly good setting. The window would then be
+        /// a black rectangle on the wrong monitor while the wall stayed dark, which from the
+        /// operator's chair is indistinguishable from "it didn't start".
+        /// </summary>
+        public static Rectangle Resolve(Rectangle saved, Rectangle[] screens, Rectangle primary) =>
+            saved.Width <= 0 || saved.Height <= 0
+                ? DefaultGeometry(screens, primary)
+                : Validate(saved, screens, primary);
+
+        /// <summary>
         /// Picks where a first-run (or otherwise absent) output geometry should default
         /// to. Prefers the first screen in <paramref name="screens"/> that is NOT
         /// <paramref name="primary"/> - on the real machine that is the LED wall at
