@@ -2,11 +2,24 @@
 
 Fill this in at the wall while following `RUNBOOK.md`. Short answers and
 ticks are fine -- this isn't a report, it's evidence. Bring it back along
-with `spike-log.txt`.
+with `spike-log.txt` and `vlc-log.txt` (the log folder is named in the
+control window's title bar).
 
 Date/time of this run: ______________________
 
 Machine (name / specs if known): ______________________
+
+---
+
+## Prerequisite install problems (if any)
+
+Only fill this in if `ndp48.exe` (or the KB4474419 / KB4019990 fallback in
+RUNBOOK step 1) refused to run or errored out. Paste the exact error text
+here, or describe the screenshot you're sending back:
+
+______________________________________________________________________
+
+______________________________________________________________________
 
 ---
 
@@ -65,8 +78,19 @@ Notes: ______________________________________________________________
 - [ ] Something worse than a plain black flash happened (describe):
       __________________________________________________________
 
-(The exact gap in milliseconds is in `spike-log.txt` -- look for the
-timestamps around "Play" / "Stopped" / "Playing" lines.)
+**Copy the GAP / FIRST PICTURE lines from `spike-log.txt` here** (one pair
+per switch is enough -- a few examples, not the whole log):
+
+```
+GAP ______->______: ______ ms
+FIRST PICTURE: ______ ms (slot ______)
+```
+
+`GAP` is the time from clicking Play to VLC reporting it's playing (a
+state-machine transition, not necessarily a frame on screen). `FIRST
+PICTURE` is the time from clicking Play to a frame actually reaching the
+video output -- closer to what the wall shows, and it's fine if the two
+numbers differ.
 
 ---
 
@@ -99,4 +123,5 @@ ______________________________________________________________________
 ## Files to bring back
 
 - [ ] `spike-log.txt`
+- [ ] `vlc-log.txt`
 - [ ] This file, filled in

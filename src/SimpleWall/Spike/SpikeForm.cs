@@ -1,5 +1,8 @@
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
+using System.Globalization;
 using System.IO;
 using System.Windows.Forms;
 using LibVLCSharp.Shared;
@@ -11,22 +14,40 @@ namespace SimpleWall.Spike
     /// drive the Win7 LED wall: init, decode/loop, pixel-accurate output window,
     /// live brightness/contrast, and the black-frame gap on clip switch.
     ///
-    /// Everything logs to spike-log.txt next to the EXE, because the only way
-    /// evidence gets off the wall PC is as a file carried back over VNC.
+    /// Everything logs to spike-log.txt (path resolved at startup -- see
+    /// SpikeLogPaths -- and shown in this window's title bar), because the only
+    /// way evidence gets off the wall PC is as a file carried back over VNC.
+    /// libvlc's own diagnostic log is written natively to vlc-log.txt alongside it
+    /// (see CreateLibVlc) rather than bridged through a managed event handler.
     ///
     /// Throwaway: most of this is deleted in Task 9 once the real VlcWallEngine exists.
     /// </summary>
     public class SpikeForm : Form
     {
         private static readonly string[] VoutOptions = { "default", "direct3d9", "directdraw" };
+        private const string LogTimestampFormat = "yyyy-MM-dd HH:mm:ss.fff";
 
+        private readonly string _logDir;
         private readonly string _logPath;
+        private readonly string _vlcLogPath;
         private readonly object _logLock = new object();
 
         private LibVLC _libVlc;
         private MediaPlayer _player;
         private OutputWindow _outputWindow;
         private string _currentSlot; // "A", "B", or null
+
+        // Clip-switch timing. Both stopwatches are Restart()-ed together at the
+        // moment Play is clicked, so their readings share the same zero point:
+        //   GAP           -- click to MediaPlayer.Playing (state-machine transition)
+        //   FIRST PICTURE -- click to _player.VoutCount > 0 (closer to an actual frame
+        //                     hitting the output; Playing can fire before that).
+        // Be honest in the runbook/findings about which is which -- they measure
+        // different things and can legitimately differ.
+        private readonly Stopwatch _gapStopwatch = new Stopwatch();
+        private readonly Stopwatch _firstPictureStopwatch = new Stopwatch();
+        private readonly Timer _firstPictureTimer;
+        private string _switchFromSlot;
 
         // Controls referenced outside BuildUi
         private TextBox _clipATextBox;
@@ -45,13 +66,28 @@ namespace SimpleWall.Spike
 
         public SpikeForm()
         {
-            _logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "spike-log.txt");
+            _logDir = SpikeLogPaths.Directory;
+            _logPath = Path.Combine(_logDir, "spike-log.txt");
+            _vlcLogPath = Path.Combine(_logDir, "vlc-log.txt");
 
-            Text = "SimpleWall Spike -- VLC on Win7 probe";
+            // The log path goes in the title bar because the log IS the deliverable
+            // of this trip -- if the operator can't find the file, the trip is wasted
+            // even if everything else worked.
+            Text = $"SimpleWall Spike -- VLC on Win7 probe -- log: {_logPath}";
             Width = 920;
             Height = 760;
             StartPosition = FormStartPosition.CenterScreen;
             MinimumSize = new Size(700, 500);
+
+            // The output window is also TopMost (it has to be, to sit over other
+            // windows on the LED-strip monitor). On a single, cramped VNC desktop
+            // the two can overlap; this keeps the control window reachable so the
+            // operator can still find Apply/Play/Stop instead of being locked out
+            // by a black rectangle with no title bar.
+            TopMost = true;
+
+            _firstPictureTimer = new Timer { Interval = 5 };
+            _firstPictureTimer.Tick += FirstPictureTimerTick;
 
             BuildUi();
 
@@ -98,6 +134,7 @@ namespace SimpleWall.Spike
                 ReadOnly = true,
                 ScrollBars = ScrollBars.Vertical,
                 WordWrap = false,
+                MaxLength = 0, // unlimited -- the default 32767 cap silently stops accepting text mid-session
                 Font = new Font(FontFamily.GenericMonospace, 8f)
             };
             root.Controls.Add(_logTextBox, 0, 1);
@@ -259,7 +296,7 @@ namespace SimpleWall.Spike
             // Attach only after the initial selection so it doesn't fire during construction.
             _voutComboBox.SelectedIndexChanged += (s, e) =>
             {
-                Log($"vout changed to '{_voutComboBox.SelectedItem}' -- recreating LibVLC instance.");
+                Log($"vout changed to '{_voutComboBox.SelectedItem}' -- recreating LibVLC instance. Playback stops; geometry is kept.");
                 CreateLibVlc();
             };
 
@@ -288,12 +325,12 @@ namespace SimpleWall.Spike
 
         private void Log(string message)
         {
-            var line = $"{DateTime.Now:HH:mm:ss.fff} {message}";
+            var line = $"{DateTime.Now.ToString(LogTimestampFormat, CultureInfo.InvariantCulture)} {message}";
 
             lock (_logLock)
             {
                 try { File.AppendAllText(_logPath, line + Environment.NewLine); }
-                catch { /* the log pane is the fallback if the file write itself fails */ }
+                catch { /* SpikeLogPaths already probed a writable directory at startup; this is a last-resort guard only */ }
             }
 
             if (_logTextBox == null || _logTextBox.IsDisposed) return;
@@ -322,6 +359,8 @@ namespace SimpleWall.Spike
 
         private void InitializeVlc()
         {
+            Log($"Log file:     {_logPath}");
+            Log($"VLC log file: {_vlcLogPath}");
             Log("=== SimpleWall Spike starting ===");
             Log($"OS version: {Environment.OSVersion}");
             Log($"Process bitness: {(Environment.Is64BitProcess ? "x64" : "x86")}");
@@ -334,6 +373,9 @@ namespace SimpleWall.Spike
         /// (Re)creates the LibVLC instance, media player and output window.
         /// Called at startup and whenever the vout dropdown changes -- LibVLC options
         /// are only read at construction time, so a vout change means starting over.
+        /// Playback stops when this runs; ApplyGeometry() below re-applies the saved
+        /// X/Y/W/H immediately, so the window doesn't need re-positioning after a vout
+        /// change, it just needs Play clicked again.
         /// </summary>
         private void CreateLibVlc()
         {
@@ -356,24 +398,43 @@ namespace SimpleWall.Spike
             try
             {
                 var vout = _voutComboBox.SelectedItem as string ?? "default";
-                var libVlcOptions = vout != "default"
-                    ? new[] { "--vout=" + vout }
-                    : new string[0];
+                var softwareDecode = _softwareDecodeCheckBox.Checked;
 
-                _libVlc = new LibVLC(libVlcOptions);
-                _libVlc.Log += OnLibVlcLog;
+                var libVlcOptions = new List<string>();
+                if (vout != "default") libVlcOptions.Add("--vout=" + vout);
 
-                Log($"LibVLC created. Version: {_libVlc.Version}");
-                Log($"vout option: {(libVlcOptions.Length > 0 ? libVlcOptions[0] : "(default)")}");
-                Log($"Software decode forced: {_softwareDecodeCheckBox.Checked}");
+                // libvlc's own diagnostic log, written natively -- not bridged through a
+                // managed LibVLC.Log event handler. Unsubscribing a native->managed log
+                // callback while one is in flight can throw AccessViolationException,
+                // which .NET 4.8 does NOT route through AppDomain.UnhandledException --
+                // the process would just die with zero evidence. This avoids that risk
+                // entirely and is a richer artifact besides (full VLC verbosity, not
+                // just what we chose to filter to warning/error).
+                libVlcOptions.Add("--file-logging");
+                libVlcOptions.Add("--logfile=" + _vlcLogPath);
+                libVlcOptions.Add("--logmode=text");
+                libVlcOptions.Add("--verbose=2");
+
+                _libVlc = new LibVLC(libVlcOptions.ToArray());
+
+                Log("==================================================");
+                Log($"Run/recreate at {DateTime.Now.ToString(LogTimestampFormat, CultureInfo.InvariantCulture)}");
+                Log($"LibVLC version: {_libVlc.Version}");
+                Log($"vout={vout} softwareDecode={softwareDecode}");
+                Log($"vlc-log.txt: {_vlcLogPath}");
+                Log("==================================================");
 
                 _player = new MediaPlayer(_libVlc);
-                _player.Playing += (s, e) => { Log($"MediaPlayer.Playing (slot {_currentSlot})."); LogResolutionIfKnown(); };
+                _player.Playing += (s, e) => MarshalPlayingToUiThread();
                 _player.Stopped += (s, e) => Log($"MediaPlayer.Stopped (slot {_currentSlot}).");
                 _player.EncounteredError += (s, e) => Log($"MediaPlayer.EncounteredError (slot {_currentSlot}).");
 
+                // Do NOT Show() yet -- on a small/single-monitor VNC desktop this borderless
+                // 1920x256 always-on-top rectangle would land directly over the Geometry
+                // group and the Apply button before the operator ever gets a chance to move
+                // it. It's shown for the first time in PlayClip(), by which point the
+                // operator has already read the runbook step that tells them what to expect.
                 _outputWindow = new OutputWindow(_player);
-                _outputWindow.Show();
                 ApplyGeometry();
                 ApplyBrightness();
                 ApplyContrast();
@@ -387,33 +448,38 @@ namespace SimpleWall.Spike
             }
         }
 
-        private void OnLibVlcLog(object sender, LogEventArgs e)
-        {
-            if (e.Level == LogLevel.Warning || e.Level == LogLevel.Error)
-            {
-                Log($"[libvlc {e.Level}] {e.Module}: {e.Message}");
-            }
-        }
-
+        /// <summary>
+        /// Teardown order matters: stop the player first, then detach the VideoView's
+        /// hwnd from it (set_hwnd(NULL) against a STOPPED player), only then dispose the
+        /// view/window, then the player, then LibVLC. Disposing the output window before
+        /// stopping the player used to hit set_hwnd(NULL) against a live player and could
+        /// hang -- and this path runs on every vout change, which is exactly the moment
+        /// the operator reaches for it because something already looks broken.
+        /// </summary>
         private void ShutdownVlc()
         {
+            _firstPictureTimer.Stop();
+
+            if (_player != null)
+            {
+                try { _player.Stop(); } catch { /* best effort during teardown */ }
+            }
+
             if (_outputWindow != null)
             {
-                try { _outputWindow.Close(); } catch { }
-                _outputWindow.Dispose();
+                _outputWindow.DetachPlayer();
+                _outputWindow.ShutDown();
                 _outputWindow = null;
             }
 
             if (_player != null)
             {
-                try { _player.Stop(); } catch { }
                 _player.Dispose();
                 _player = null;
             }
 
             if (_libVlc != null)
             {
-                _libVlc.Log -= OnLibVlcLog;
                 _libVlc.Dispose();
                 _libVlc = null;
             }
@@ -449,20 +515,85 @@ namespace SimpleWall.Spike
                 Log("Software decode forced for this clip (:avcodec-hw=none).");
             }
 
+            _switchFromSlot = _currentSlot;
             _currentSlot = slot;
+
+            // Both stopwatches share this zero point -- see the field comments above
+            // for what each one measures and why they're expected to differ.
+            _gapStopwatch.Restart();
+            _firstPictureStopwatch.Restart();
+            _firstPictureTimer.Stop();
+            _firstPictureTimer.Start();
+
             _player.Play(media);
             Log($"MediaPlayer.Play() called for slot {slot}.");
 
             _player.SetAdjustInt(VideoAdjustOption.Enable, 1);
             ApplyBrightness();
             ApplyContrast();
+
+            if (_outputWindow != null && !_outputWindow.Visible)
+            {
+                _outputWindow.Show();
+                Log("Output window shown (first Play).");
+            }
         }
 
         private void StopPlayback()
         {
             Log("--- Stop requested ---");
+            _firstPictureTimer.Stop();
             _player?.Stop();
             _currentSlot = null;
+        }
+
+        /// <summary>
+        /// VLC event callbacks run on libvlc's own thread, and libvlc's docs forbid
+        /// re-entering libvlc from inside one of those callbacks -- it's a known
+        /// deadlock source, and Playing is the success path: it fires the very first
+        /// time anything works. So this callback does nothing itself except post a
+        /// delegate to the UI thread and return immediately; all the actual work
+        /// (which touches _player.Media / media.Tracks) happens over there instead.
+        /// </summary>
+        private void MarshalPlayingToUiThread()
+        {
+            try
+            {
+                if (IsHandleCreated) BeginInvoke((Action)OnPlayingOnUiThread);
+            }
+            catch (ObjectDisposedException) { }
+            catch (InvalidOperationException) { }
+        }
+
+        private void OnPlayingOnUiThread()
+        {
+            Log($"MediaPlayer.Playing (slot {_currentSlot}).");
+
+            if (_gapStopwatch.IsRunning)
+            {
+                _gapStopwatch.Stop();
+                var fromLabel = _switchFromSlot ?? "START";
+                Log($"GAP {fromLabel}->{_currentSlot}: {_gapStopwatch.ElapsedMilliseconds} ms");
+            }
+
+            LogResolutionIfKnown();
+        }
+
+        /// <summary>
+        /// Polls on a UI-thread timer (not a libvlc callback) until the player reports
+        /// an active video output -- closer to "a frame is actually on the wall" than
+        /// the Playing state-machine transition above, which can fire slightly before
+        /// that. 5ms is what was asked for; real resolution is closer to Windows'
+        /// ordinary timer granularity, but the Stopwatch reading taken at each tick is
+        /// still far tighter than DateTime.Now's ~15.6ms granularity would give.
+        /// </summary>
+        private void FirstPictureTimerTick(object sender, EventArgs e)
+        {
+            if (_player != null && _player.VoutCount > 0)
+            {
+                _firstPictureTimer.Stop();
+                Log($"FIRST PICTURE: {_firstPictureStopwatch.ElapsedMilliseconds} ms (slot {_currentSlot})");
+            }
         }
 
         private void LogResolutionIfKnown()
@@ -501,19 +632,19 @@ namespace SimpleWall.Spike
         private void ApplyBrightness()
         {
             var value = _brightnessTrackBar.Value / 100f;
-            _brightnessValueLabel.Text = value.ToString("0.00");
+            _brightnessValueLabel.Text = value.ToString("0.00", CultureInfo.InvariantCulture);
             if (_player == null) return;
             _player.SetAdjustFloat(VideoAdjustOption.Brightness, value);
-            Log($"Brightness set to {value:0.00}");
+            Log($"Brightness set to {value.ToString("0.00", CultureInfo.InvariantCulture)}");
         }
 
         private void ApplyContrast()
         {
             var value = _contrastTrackBar.Value / 100f;
-            _contrastValueLabel.Text = value.ToString("0.00");
+            _contrastValueLabel.Text = value.ToString("0.00", CultureInfo.InvariantCulture);
             if (_player == null) return;
             _player.SetAdjustFloat(VideoAdjustOption.Contrast, value);
-            Log($"Contrast set to {value:0.00}");
+            Log($"Contrast set to {value.ToString("0.00", CultureInfo.InvariantCulture)}");
         }
     }
 }

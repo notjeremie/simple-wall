@@ -1,4 +1,3 @@
-using System;
 using System.Drawing;
 using System.Windows.Forms;
 using LibVLCSharp.Shared;
@@ -14,6 +13,7 @@ namespace SimpleWall.Spike
     public class OutputWindow : Form
     {
         private readonly VideoView _videoView;
+        private bool _allowClose;
 
         public OutputWindow(MediaPlayer player)
         {
@@ -30,6 +30,32 @@ namespace SimpleWall.Spike
                 MediaPlayer = player
             };
             Controls.Add(_videoView);
+
+            FormClosing += OnFormClosing;
+        }
+
+        private void OnFormClosing(object sender, FormClosingEventArgs e)
+        {
+            if (!_allowClose)
+            {
+                // Borderless and always-on-top: there is no legitimate way for the
+                // operator to close this window directly. If it ever happens anyway
+                // (e.g. a stray Alt+F4 while it somehow has focus), refuse -- otherwise
+                // SpikeForm is left holding a non-null but disposed _outputWindow, and
+                // the next ApplyGeometry() throws ObjectDisposedException on the UI thread.
+                e.Cancel = true;
+            }
+        }
+
+        /// <summary>
+        /// Detaches the VideoView from the player. Must be called while the player
+        /// is already stopped, and before either side is disposed -- see the ordering
+        /// in SpikeForm.ShutdownVlc. Calling set_hwnd(NULL) against a live player is
+        /// the hang this exists to avoid.
+        /// </summary>
+        public void DetachPlayer()
+        {
+            _videoView.MediaPlayer = null;
         }
 
         /// <summary>Moves and resizes the window live. Called from SpikeForm's Apply button.</summary>
@@ -38,11 +64,21 @@ namespace SimpleWall.Spike
             Bounds = rect;
         }
 
+        /// <summary>
+        /// The only sanctioned way to close this window -- used during real shutdown
+        /// (app exit, or recreating LibVLC on a vout change). Anything else hitting
+        /// FormClosing is refused; see OnFormClosing.
+        /// </summary>
+        public void ShutDown()
+        {
+            _allowClose = true;
+            Close();
+        }
+
         protected override void Dispose(bool disposing)
         {
             if (disposing)
             {
-                _videoView.MediaPlayer = null;
                 _videoView.Dispose();
             }
             base.Dispose(disposing);

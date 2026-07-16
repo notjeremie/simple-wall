@@ -26,8 +26,12 @@ namespace SimpleWall
         {
             try
             {
-                var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "spike-log.txt");
-                var line = $"{DateTime.Now:HH:mm:ss.fff} CRASH via {source}: {ex}{Environment.NewLine}";
+                // Same writable-directory resolution the running SpikeForm used (next
+                // to the EXE, falling back to %LOCALAPPDATA% then Desktop) -- a crash
+                // can happen before/after any SpikeForm instance exists, so this can't
+                // just ask one for its path.
+                var path = Path.Combine(SimpleWall.Spike.SpikeLogPaths.Directory, "spike-log.txt");
+                var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} CRASH via {source}: {ex}{Environment.NewLine}";
                 File.AppendAllText(path, line);
             }
             catch
