@@ -209,9 +209,29 @@ Throwaway code. No tests. No polish. It answers five questions and then most of 
 ```
 `VideoLAN.LibVLC.Windows` ships the native VLC binaries into the output folder — this is what makes the app self-contained, with no VLC install required on the wall PC. Pin the 3.x line: **VLC 4.x drops Windows 7.**
 
+**Delivery reality — this is a one-shot, and it shapes the design.** The Win7 PC is only reachable by VNC from the user's *work* computer. Nobody with a debugger is going near it. The loop is: build here → zip → WeTransfer → download at work → push over VNC → run → read results → report back. Each round-trip costs hours, so:
+
+- **The spike is self-contained and self-diagnosing.** It gets a small control window so all five questions are answered in one sitting, and it writes `spike-log.txt` capturing everything — including LibVLC's own internal log — so the evidence comes back as a file rather than as remembered impressions.
+- **Every prerequisite ships in the zip.** Win7 SP1 does *not* include .NET Framework 4.8, and may lack the VC++ runtime VLC needs. Discovering either at the wall costs a whole trip. Bundle both.
+- **Hardcoded geometry is wrong here.** The operator must be able to nudge the output onto the strip live, because nobody can predict the exact rectangle from here.
+- **The runbook does the thinking.** The person at the VNC session should follow steps and record observations, not diagnose. That's `docs/spike/RUNBOOK.md`.
+
+This is more than a throwaway spike would normally justify. It's justified by the round-trip cost, not by the code's future — most of it is still deleted in Task 9.
+
 **Step 2: Write the spike form**
 
-`src/SimpleWall/Spike/SpikeForm.cs` — a borderless top-most form, hardcoded geometry, playing a hardcoded clip on loop, with two trackbars for brightness/contrast and a key to switch clips.
+`src/SimpleWall/Spike/SpikeForm.cs` — a small **control** window (normal, on the main monitor) plus a borderless top-most **output** window. The control window carries:
+
+- **Clip A / Clip B** file pickers (clips are already on that machine — browse to them).
+- **Output geometry**: X / Y / W / H fields + *Apply*, so the strip can be found live. Defaults 0 / 0 / 1920 / 256.
+- **Play A**, **Play B**, **Stop** — switching A↔B is how the black frame gets measured.
+- **Brightness** and **Contrast** trackbars (0–200 → 0.0–2.0), live, plus *Reset*.
+- **Force software decode** checkbox (`:avcodec-hw=none`) and a **vout** dropdown (`default` / `direct3d9` / `directdraw`) — the two most likely Win7 fixes, switchable without a rebuild and therefore without another trip.
+- A **log pane**, mirrored to `spike-log.txt` next to the EXE.
+
+The log must record, automatically: libvlc version string, OS version, process bitness, the media's detected resolution, every LibVLC log message at warning/error level, and a **timestamp on every play/stop transition** — the A→B gap in that log is the black-frame measurement, and it beats filming the wall with a phone.
+
+Sketch of the engine bits (the WinForms plumbing is ordinary and not spelled out here):
 
 ```csharp
 using System;
@@ -277,13 +297,44 @@ ssh wallvm 'cmd /c "pushd \\Mac\Home\Documents\Coding\simple-wall && dotnet buil
 ```
 Run it in the VM against any mp4. Expect video. Expect it to be slow — VLC x64 is emulating on ARM. **Do not tune performance here; VM performance is meaningless.** This step only proves the code runs before you carry it to the wall.
 
-**Step 5: Deploy to the Win7 PC — the real test**
+**Step 5: Build the package**
 
-Copy the entire `bin/x64/Debug/net48/` folder (EXE + VLC natives) to the Win7 machine. Run it with a real clip on the real wall.
+Produce `dist/simple-wall-spike.zip` containing:
 
-**Step 6: Answer the five questions in writing**
+| Item | Why |
+|---|---|
+| `spike/` — the Release output folder (EXE + VLC natives), **minus `libvlc/win-x86/`** | The thing under test. The app is x64; the x86 natives are dead weight and roughly half the payload |
+| `prereq/ndp48-offline.exe` (116 MB, verified downloaded) | **Win7 SP1 does not ship .NET Framework 4.8.** Without it the EXE won't start at all. Offline installer, not the web one — the wall PC may have no internet |
+| `prereq/kb4474419-x64.msu` (53 MB, verified) | SHA-2 signing support. Without it .NET 4.8 **refuses to install** on an un-updated Win7 SP1 — a very common state for an offline wall PC |
+| `RUNBOOK.md` | Step-by-step for the VNC operator |
+| `FINDINGS.md` | Template with the five questions, filled in at the wall and brought back |
 
-Create `docs/plans/2026-07-16-spike-findings.md` and record what actually happened — especially anything surprising. Answer all five questions, and measure the black frame between clips (film it with a phone at 60fps if it's hard to judge by eye).
+The zip goes to the user, who uploads it to WeTransfer, downloads it at work, and pushes it to the Win7 box over VNC.
+
+**VC++ redist: NOT bundled — verified unnecessary.** `libvlc.dll` and `libvlccore.dll` import only `msvcrt.dll` (the ancient system CRT, present on every Win7), and no plugin references `msvcp140`/`vcruntime140`. VideoLAN builds with MinGW. Checked by inspecting the actual DLL imports, not assumed. This also dodges a trap: the current VC++ redist (14.40+) **dropped Win7 support**, so bundling it would have handed the operator an installer that refuses to run, for a problem that doesn't exist. The plan's original failure table was wrong about this.
+
+**KB4019990 (`d3dcompiler_47.dll`) — not bundled, deliberately.** It's the *other* .NET 4.8 prerequisite, but no direct download URL is reachable (the Update Catalog needs a session; Chocolatey's page 403s). Not worth chasing, because of this:
+
+**The self-service rule.** The work computer has internet AND the VNC session. A missing prerequisite therefore does **not** need a round-trip through the developer — the operator downloads it at work and pushes it over VNC. Every "you might need X" branch in the runbook must name the thing and give the URL, so it costs five minutes instead of half a day. This principle applies to anything the spike turns out to need.
+
+**Step 6: The runbook**
+
+`docs/spike/RUNBOOK.md`, written for someone at a VNC session who is *not* debugging — steps and observations, no diagnosis. It must cover:
+
+1. Check .NET 4.8 first (registry `HKLM\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full` → `Release` ≥ 528040), install from `prereq/` only if absent. Reboot if the installer asks.
+2. Install VC++ redist (harmless if already present).
+3. Run `SimpleWall.exe`. **If it fails to start, stop and send back `spike-log.txt` plus a screenshot** — that alone is a result.
+4. Pick a real clip in Clip A and one in Clip B.
+5. Get the output window onto the strip using the X/Y/W/H fields. Record the numbers that work — those become the real config's defaults.
+6. Watch a full loop cycle. Stutter? Tearing? Seam at the loop point?
+7. Drag brightness and contrast. Do they respond live, and does the LED panel look right (not the desktop monitor — the panel).
+8. Switch A→B→A a few times. Watch the wall, not the screen.
+9. If black or stuttering: tick *Force software decode*, retry. Then try each vout option. Record which combination works — that's the finding that Task 9 depends on.
+10. Bring back `spike-log.txt` and the filled `FINDINGS.md`.
+
+**Step 7: Record the findings**
+
+The returned `FINDINGS.md` lands at `docs/plans/2026-07-16-spike-findings.md`, with `spike-log.txt` alongside as evidence. Answer all five questions, and capture the geometry numbers and the working decode/vout combination — Task 9 consumes both as facts, not preferences.
 
 **Known Win7 failure modes, and what they mean:**
 
@@ -294,13 +345,15 @@ Create `docs/plans/2026-07-16-spike-findings.md` and record what actually happen
 | Stutter or tearing | Old GPU driver / vsync | Try output modules: `--vout=direct3d9` vs `directdraw` |
 | Missing VC++ runtime | Win7 lacks the redistributable | Install VC++ 2015-2022 x64 redist on the wall PC; note it as a deploy prerequisite |
 
-**Step 7: Commit the spike and findings**
+**Step 8: Commit the spike and findings**
 
 ```bash
-git add src/SimpleWall docs/plans/2026-07-16-spike-findings.md
+git add src/SimpleWall docs/spike docs/plans/2026-07-16-spike-findings.md
 git commit -m "spike: verify VLC playback on Windows 7 target"
 ```
 Committed even though it's throwaway — if the approach later needs defending or revisiting, the evidence should be in history.
+
+**While the spike is in flight:** Tasks 3–8 are pure logic, unit-tested in the VM, and touch no VLC. Run them in parallel. Task 9 is the first that consumes the spike's findings and stays blocked until they come back.
 
 **STOP HERE. Report the findings before continuing.** If VLC can't drive this wall on Win7, the design changes and the rest of this plan is void. If it works, everything below is ordinary work.
 
@@ -723,6 +776,18 @@ git commit -m "feat: unified command path interface"
 ---
 
 ## Task 6: Scheduler due-calculation
+
+> **⚠ READ THIS FIRST — a landmine identified during Task 3's review.**
+>
+> This task adds `List<ScheduledTask> Tasks` to `WallConfig`. **It MUST be declared with an initializer:**
+> ```csharp
+> public List<ScheduledTask> Tasks { get; set; } = new List<ScheduledTask>();
+> ```
+> Without it, every config file written before this task (i.e. every config on the wall PC) deserializes `Tasks` to **null**, and the scheduler NREs at startup — on the one machine nobody wants to reconfigure by hand.
+>
+> The existing `UnknownAndMissingFieldsLoadWithDefaultsIntact` test pins the serializer *mechanism* (unknown fields don't quarantine; missing fields keep their initializers) but it **cannot** catch this — it only asserts on `Brightness`/`Clips`, so it stays green while the app dies. Extend it with `Assert.NotNull(config.Tasks)` and `Assert.Empty(config.Tasks)` as part of this task.
+>
+> Same reason `ConfigStore` deserializes with `NullValueHandling.Ignore`: a JSON `null` would otherwise clobber the initializer and produce the same null list from a file that parses fine.
 
 **The highest-value tests in the project.** Scheduler bugs surface once a week, at the worst possible moment, and can't be reproduced on demand. So the clock is a *parameter*, never read inside the logic — which turns "is this due?" into a pure function testable in milliseconds instead of a thing you find out about on Sunday.
 

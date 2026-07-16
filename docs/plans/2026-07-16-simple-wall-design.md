@@ -61,6 +61,10 @@ Each box shows a thumbnail (first frame, extracted once and cached to disk), the
 
 **Stable slot numbers**: a box keeps its number for life. Removing a box does not renumber the others; a new box takes the lowest free number. The number on the box is the OSC address, so a Stream Deck mapping never silently drifts when the grid is edited.
 
+**Config repair on load.** A config file could hold duplicate slot numbers or slots outside 1–50 — hand-edited, or written by a future bug. That state is already ambiguous (`/clip/7` has no defined meaning if two clips claim slot 7), and worse, it creates a path to exactly the drift stable numbering exists to prevent: removing one of the duplicates frees the number, and a later unrelated add silently reuses it, so a Stream Deck button ends up triggering a clip nobody mapped to it.
+
+So the clip library normalizes when it loads: walking in file order, the first entry claiming a slot keeps it, and any duplicate or out-of-range entry is reassigned to the lowest free slot. Nothing is dropped (losing a clip silently is worse than renumbering one), except entries beyond the 50th — there are only 50 slots. A healthy config is never touched. When a repair happens the app says so and saves the corrected file, rather than fixing it silently on every load.
+
 Boxes hold absolute paths, not copies of the media.
 
 ### Triggering
