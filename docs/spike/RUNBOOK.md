@@ -23,50 +23,40 @@ You should see exactly this:
 
 ```
 SimpleWallSpike\
-  spike\                 <- the app (SimpleWall.exe + VLC files)
-  prereq\
-    ndp48-offline.exe    <- .NET Framework 4.8 offline installer
-    kb4474419-x64.msu    <- only needed if ndp48-offline.exe refuses -- see step 1
-  RUNBOOK.md              <- this file
+  spike\        <- the app (SimpleWall.exe + VLC files)
+  RUNBOOK.md    <- this file
   FINDINGS.md
 ```
 
-There is no VC++ redistributable in this package and none is needed --
-already confirmed the app doesn't require it.
+**Extract somewhere writable — your Desktop or `C:\SimpleWallSpike\`. NOT
+`C:\Program Files\`.** The app needs to write its logs next to itself, and the
+logs are the entire point of this trip.
+
+No installers ship with this package, and none are needed. Both prerequisites
+were checked on this exact machine on 2026-07-16 and both are already satisfied:
+
+- **.NET Framework 4.8** — `Release = 0x80eb1` (528049), which is ≥ 528040. Installed.
+- **`d3dcompiler_47.dll`** — present in `C:\Windows\System32` (4,296,704 bytes, dated 2017-04-12).
+- **VC++ redistributable** — not needed at all. VLC's libraries are MinGW-built and
+  import only `msvcrt.dll`, which every Windows 7 already has.
+
+That's why this package is ~55 MB instead of ~225 MB.
 
 ---
 
-## 1. Check .NET Framework 4.8 first
+## 1. Confirm the machine is what we expect
 
-Open **Registry Editor** (`regedit`) and navigate to:
+Thirty seconds, and it protects everything after it. Open `cmd` and run:
 
 ```
-HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full
+reg query "HKLM\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full" /v Release
 ```
 
-Look at the `Release` value (a DWORD).
-
-- **If `Release` is 528040 or higher**: .NET 4.8 is already installed. Skip to step 2.
-- **If the key is missing, or `Release` is lower than 528040**: run `prereq\ndp48-offline.exe` from the package. Let it finish. **If it asks to reboot, reboot.** Then come back and re-check the registry value before continuing.
-
-**If `ndp48-offline.exe` refuses to run or errors out**, this is not
-automatically a dead end. The work computer you're VNC-ing from has internet
-access and the wall PC (probably) doesn't, so a missing prerequisite doesn't
-have to cost a round-trip:
-
-1. If the error mentions a missing update or SHA-2/signing support: install
-   `prereq\kb4474419-x64.msu` (already in the package), reboot if asked, then
-   retry `ndp48-offline.exe`.
-2. If the error instead names **KB4019990** or **d3dcompiler_47.dll**: this
-   one isn't bundled. On the **work computer** (not the wall PC), go to
-   `https://www.catalog.update.microsoft.com/Search.aspx?q=KB4019990` and
-   download the update listed for **Windows 7 ... x64-based Systems**. Push
-   that file over VNC to the wall PC, install it, reboot if asked, then retry
-   `ndp48-offline.exe`.
-3. **Only if neither of those resolves it: STOP.** Copy the EXACT error text
-   (or a screenshot of it) into `FINDINGS.md` under "Prerequisite install
-   problems" and send it back. That is a valid, complete result of this trip
-   -- do not improvise beyond the two things above.
+- **Expected**: `Release  REG_DWORD  0x80eb1` (or any value ≥ 528040 — i.e. `0x80ec8` or higher in hex).
+- **If the key is missing, or the value is lower**: you are not on the machine this
+  package was built for. **STOP** and report it. Do not improvise — the .NET 4.8
+  installer is deliberately not in this package, and pulling one down uninstructed
+  risks a reboot you didn't plan for.
 
 ---
 

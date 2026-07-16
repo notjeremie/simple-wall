@@ -160,7 +160,7 @@ namespace SimpleWall.Spike
                 FlowDirection = FlowDirection.TopDown,
                 WrapContents = false,
                 AutoSize = true,
-                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                AutoSizeMode = AutoSizeMode.GrowOnly,
                 Padding = new Padding(8)
             };
             root.Controls.Add(controlsPanel, 0, 0);
@@ -185,11 +185,11 @@ namespace SimpleWall.Spike
 
         private GroupBox BuildClipsGroup()
         {
-            var group = new GroupBox { Text = "Clips", Width = 880, AutoSize = true, Padding = new Padding(8) };
+            var group = new GroupBox { Text = "Clips", Width = 880, Height = 132, Padding = new Padding(8) };
 
             var table = new TableLayoutPanel
             {
-                Dock = DockStyle.Top,
+                Dock = DockStyle.Fill,
                 ColumnCount = 3,
                 AutoSize = true
             };
@@ -229,11 +229,11 @@ namespace SimpleWall.Spike
 
         private GroupBox BuildGeometryGroup()
         {
-            var group = new GroupBox { Text = "Output Geometry", Width = 880, AutoSize = true, Padding = new Padding(8) };
+            var group = new GroupBox { Text = "Output Geometry", Width = 880, Height = 100, Padding = new Padding(8) };
 
             var table = new TableLayoutPanel
             {
-                Dock = DockStyle.Top,
+                Dock = DockStyle.Fill,
                 ColumnCount = 5,
                 AutoSize = true
             };
@@ -279,11 +279,11 @@ namespace SimpleWall.Spike
 
         private GroupBox BuildImageAdjustGroup()
         {
-            var group = new GroupBox { Text = "Image Adjust", Width = 880, AutoSize = true, Padding = new Padding(8) };
+            var group = new GroupBox { Text = "Image Adjust", Width = 880, Height = 140, Padding = new Padding(8) };
 
             var table = new TableLayoutPanel
             {
-                Dock = DockStyle.Top,
+                Dock = DockStyle.Fill,
                 ColumnCount = 4,
                 AutoSize = true
             };
@@ -320,11 +320,11 @@ namespace SimpleWall.Spike
 
         private GroupBox BuildDecodeOptionsGroup()
         {
-            var group = new GroupBox { Text = "Decode Options (Win7 fixes -- switchable without a rebuild)", Width = 880, AutoSize = true, Padding = new Padding(8) };
+            var group = new GroupBox { Text = "Decode Options (Win7 fixes -- switchable without a rebuild)", Width = 880, Height = 92, Padding = new Padding(8) };
 
             var table = new TableLayoutPanel
             {
-                Dock = DockStyle.Top,
+                Dock = DockStyle.Fill,
                 ColumnCount = 2,
                 AutoSize = true
             };

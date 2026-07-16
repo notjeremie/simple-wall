@@ -11,12 +11,14 @@ Machine (name / specs if known): ______________________
 
 ---
 
-## Prerequisite install problems (if any)
+## Prerequisite problems (if any)
 
-Only fill this in if `ndp48-offline.exe` refused to run or errored out, and
-neither `kb4474419-x64.msu` nor a downloaded KB4019990 (RUNBOOK step 1)
-resolved it. Paste the exact error text here, or describe the screenshot
-you're sending back:
+Nothing should need installing — .NET 4.8 (`Release = 0x80eb1` = 528049) and
+`d3dcompiler_47.dll` were both verified present on this machine on 2026-07-16,
+which is why no installers ship in this package.
+
+Only fill this in if RUNBOOK step 1 did NOT show `Release` ≥ 528040 — i.e. this
+isn't the machine we checked. Paste what the registry query actually printed:
 
 ______________________________________________________________________
 
@@ -29,7 +31,6 @@ ______________________________________________________________________
 **1. Does VLC 3.x initialize at all on this Win7 SP1 box?**
 
 - [ ] Yes, no problems
-- [ ] Yes, but only after installing .NET 4.8 from `prereq\`
 - [ ] No -- app failed to start, or the "Spike -- VLC init failed" dialog
       appeared (see step 2 of RUNBOOK -- `spike-log.txt` + screenshot should
       already be attached)
