@@ -109,5 +109,129 @@ namespace SimpleWall.Tests
             Assert.Single(library.Clips);
             Assert.Equal(1, library.Clips[0].Slot);
         }
+
+        [Fact]
+        public void ConstructingWithDuplicateSlotsReassignsAllButTheFirstClaimant()
+        {
+            // A hand-edited or buggy config can hand us two entries both claiming slot 7.
+            // ConfigStore deliberately doesn't validate this - it's this constructor's job.
+            var fromConfig = new List<ClipEntry>
+            {
+                new ClipEntry { Slot = 7, Path = @"C:\first.mp4" },
+                new ClipEntry { Slot = 7, Path = @"C:\second.mp4" },
+            };
+
+            var library = new ClipLibrary(fromConfig);
+
+            Assert.True(library.WasNormalized);
+            Assert.Equal(2, library.Clips.Count);
+            // The first claimant keeps 7 - the same one BySlot's FirstOrDefault would have
+            // picked anyway.
+            Assert.Equal(@"C:\first.mp4", library.BySlot(7).Path);
+            // The second clip is not dropped, just moved off of 7, to a slot nothing else holds.
+            var slots = library.Clips.Select(c => c.Slot).ToList();
+            Assert.Equal(slots.Count, slots.Distinct().Count());
+            Assert.Contains(library.Clips, c => c.Path == @"C:\second.mp4" && c.Slot != 7);
+        }
+
+        [Fact]
+        public void RemovingADuplicatedSlotDoesNotDeleteTheOtherClip_NoStreamDeckDrift()
+        {
+            // This is the exact failure the class exists to prevent: before normalization,
+            // Remove(7) used RemoveAll(c => c.Slot == 7), which - handed a config with two
+            // raw entries both at slot 7 - would delete BOTH, including one the operator
+            // never selected. Normalizing at construction means Remove/Add never see a
+            // duplicate slot in the first place.
+            var fromConfig = new List<ClipEntry>
+            {
+                new ClipEntry { Slot = 7, Path = @"C:\first-seven.mp4" },
+                new ClipEntry { Slot = 7, Path = @"C:\second-seven.mp4" },
+            };
+
+            var library = new ClipLibrary(fromConfig);
+            var survivor = library.Clips.Single(c => c.Path == @"C:\second-seven.mp4");
+            var survivorSlot = survivor.Slot;
+
+            library.Remove(7);
+
+            // The clip that was reassigned off of slot 7 during normalization must still be
+            // there, at its own stable slot, completely unaffected by removing slot 7.
+            Assert.NotNull(library.BySlot(survivorSlot));
+            Assert.Equal(@"C:\second-seven.mp4", library.BySlot(survivorSlot).Path);
+
+            var added = library.Add(@"C:\new.mp4");
+
+            // A new clip must never be able to land on the surviving clip's slot - that
+            // would be the same Stream Deck drift under a different slot number.
+            Assert.NotEqual(survivorSlot, added.Slot);
+        }
+
+        [Fact]
+        public void OutOfRangeSlotsFromConfigAreReassignedIntoValidRange()
+        {
+            var fromConfig = new List<ClipEntry>
+            {
+                new ClipEntry { Slot = 0, Path = @"C:\zero.mp4" },
+                new ClipEntry { Slot = -3, Path = @"C:\negative.mp4" },
+                new ClipEntry { Slot = 51, Path = @"C:\toohigh.mp4" },
+            };
+
+            var library = new ClipLibrary(fromConfig);
+
+            Assert.True(library.WasNormalized);
+            Assert.Equal(3, library.Clips.Count);
+            Assert.All(library.Clips, c => Assert.InRange(c.Slot, 1, ClipLibrary.MaxClips));
+        }
+
+        [Fact]
+        public void ConstructingFromAlreadyCleanConfigDoesNotNormalizeOrChangeSlots()
+        {
+            // Guards against the normalizer "helpfully" renumbering a healthy config with
+            // gaps - which would itself be the drift this class exists to prevent.
+            var fromConfig = new List<ClipEntry>
+            {
+                new ClipEntry { Slot = 1, Path = @"C:\a.mp4" },
+                new ClipEntry { Slot = 5, Path = @"C:\b.mp4" },
+                new ClipEntry { Slot = 9, Path = @"C:\c.mp4" },
+            };
+
+            var library = new ClipLibrary(fromConfig);
+
+            Assert.False(library.WasNormalized);
+            Assert.Equal(new[] { 1, 5, 9 }, library.Clips.Select(c => c.Slot));
+        }
+
+        [Fact]
+        public void MoreThanFiftyEntriesFromConfigAreTruncatedToFifty()
+        {
+            var fromConfig = Enumerable.Range(1, 60)
+                .Select(i => new ClipEntry { Slot = i, Path = $@"C:\{i}.mp4" })
+                .ToList();
+
+            var library = new ClipLibrary(fromConfig);
+
+            Assert.True(library.WasNormalized);
+            Assert.Equal(50, library.Clips.Count);
+            Assert.Equal(@"C:\1.mp4", library.BySlot(1).Path);
+            Assert.Null(library.BySlot(60));
+        }
+
+        [Fact]
+        public void NormalizationMutatesTheSameListInstancePassedIn()
+        {
+            // So that a subsequent config save (the caller's List<ClipEntry>, unchanged
+            // reference) persists the repair rather than silently discarding it.
+            var fromConfig = new List<ClipEntry>
+            {
+                new ClipEntry { Slot = 7, Path = @"C:\a.mp4" },
+                new ClipEntry { Slot = 7, Path = @"C:\b.mp4" },
+            };
+
+            var library = new ClipLibrary(fromConfig);
+
+            Assert.Same(fromConfig, library.Clips);
+            Assert.Equal(7, fromConfig[0].Slot);
+            Assert.NotEqual(7, fromConfig[1].Slot);
+        }
     }
 }
