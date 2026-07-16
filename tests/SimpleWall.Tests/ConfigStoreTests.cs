@@ -1,13 +1,52 @@
+using System;
+using System.Collections.Generic;
 using System.IO;
 using Xunit;
 using SimpleWall.Model;
 
 namespace SimpleWall.Tests
 {
-    public class ConfigStoreTests
+    public class ConfigStoreTests : IDisposable
     {
-        private static string TempFile() =>
-            Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".json");
+        private readonly List<string> _tempPaths = new List<string>();
+
+        private string TempFile()
+        {
+            var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".json");
+            _tempPaths.Add(path);
+            return path;
+        }
+
+        // Quarantine file names are timestamped (config.json.bad-yyyyMMdd-HHmmss-fff), so
+        // match by prefix rather than an exact ".bad" suffix.
+        private static bool QuarantineFileExists(string path)
+        {
+            var dir = Path.GetDirectoryName(path);
+            var name = Path.GetFileName(path);
+            return Directory.GetFiles(dir, name + ".bad*").Length > 0;
+        }
+
+        public void Dispose()
+        {
+            foreach (var path in _tempPaths)
+            {
+                TryDelete(path);
+                TryDelete(path + ".tmp");
+
+                var dir = Path.GetDirectoryName(path);
+                var name = Path.GetFileName(path);
+                foreach (var bad in Directory.GetFiles(dir, name + ".bad*"))
+                {
+                    TryDelete(bad);
+                }
+            }
+        }
+
+        private static void TryDelete(string path)
+        {
+            try { if (File.Exists(path)) File.Delete(path); }
+            catch (Exception) { /* best-effort cleanup only */ }
+        }
 
         [Fact]
         public void LoadReturnsDefaultsWhenFileMissing()
@@ -45,7 +84,85 @@ namespace SimpleWall.Tests
             var config = new ConfigStore(path).Load();
 
             Assert.Equal(7000, config.OscPort);
-            Assert.True(File.Exists(path + ".bad"), "corrupt config should be kept for diagnosis, not deleted");
+            Assert.True(QuarantineFileExists(path), "corrupt config should be kept for diagnosis, not deleted");
+        }
+
+        [Fact]
+        public void EmptyFileIsQuarantined()
+        {
+            var path = TempFile();
+            File.WriteAllText(path, "");
+
+            var config = new ConfigStore(path).Load();
+
+            Assert.Equal(7000, config.OscPort);
+            Assert.True(QuarantineFileExists(path), "an empty config deserializes to null and must be treated as corrupt");
+        }
+
+        [Fact]
+        public void NullClipsDeserializesToEmptyListNotNull()
+        {
+            var path = TempFile();
+            File.WriteAllText(path, "{ \"OscPort\": 7001, \"Clips\": null }");
+
+            var config = new ConfigStore(path).Load();
+
+            Assert.Equal(7001, config.OscPort);
+            Assert.NotNull(config.Clips);
+            Assert.Empty(config.Clips);
+        }
+
+        [Fact]
+        public void TruncatedJsonIsQuarantined()
+        {
+            var path = TempFile();
+            File.WriteAllText(path, "{\"OscPort\":7000,\"Clips\":[{\"Slot\"");
+
+            var config = new ConfigStore(path).Load();
+
+            Assert.Equal(7000, config.OscPort);
+            Assert.True(QuarantineFileExists(path), "truncated json should be quarantined, not silently replaced with defaults in place");
+        }
+
+        [Fact]
+        public void UnknownAndMissingFieldsLoadWithDefaultsIntact()
+        {
+            // Pins forward/backward compatibility: an old config file (missing fields a later
+            // task will add, e.g. Task 6's "Tasks" list) or a newer one (with fields this build
+            // doesn't know about yet) must both still load, with defaults filling the gaps.
+            var path = TempFile();
+            File.WriteAllText(path, "{ \"OscPort\": 7005, \"SomeFutureFieldNobodyKnowsAboutYet\": 42 }");
+
+            var config = new ConfigStore(path).Load();
+
+            Assert.Equal(7005, config.OscPort);
+            Assert.Equal(1.0f, config.Brightness);
+            Assert.NotNull(config.Clips);
+            Assert.Empty(config.Clips);
+            Assert.False(QuarantineFileExists(path), "a merely-old-or-newer config is not corrupt");
+        }
+
+        [Fact]
+        public void FailedSaveLeavesPreviousConfigLoadable()
+        {
+            var path = TempFile();
+            var store = new ConfigStore(path);
+
+            var original = store.Load();
+            original.OscPort = 7001;
+            store.Save(original);
+
+            // Force the next Save() to fail partway through, by holding an exclusive lock
+            // on the temp file it needs to write to.
+            var tmpPath = path + ".tmp";
+            using (new FileStream(tmpPath, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                var attempted = new WallConfig { OscPort = 9999 };
+                Assert.ThrowsAny<IOException>(() => store.Save(attempted));
+            }
+
+            var reloaded = new ConfigStore(path).Load();
+            Assert.Equal(7001, reloaded.OscPort);
         }
 
         [Fact]
