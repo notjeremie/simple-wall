@@ -26,13 +26,26 @@ namespace SimpleWall
         {
             try
             {
-                // Same writable-directory resolution the running SpikeForm used (next
-                // to the EXE, falling back to %LOCALAPPDATA% then Desktop) -- a crash
-                // can happen before/after any SpikeForm instance exists, so this can't
-                // just ask one for its path.
-                var path = Path.Combine(SimpleWall.Spike.SpikeLogPaths.Directory, "spike-log.txt");
+                // Prefer the directory SpikeForm actually opened spike-log.txt in (set
+                // once it succeeds -- see SpikeLogPaths.ActiveLogDirectory), since that
+                // can differ from the generic directory-level probe below if the
+                // specific file, not just its directory, turned out to be locked. Falls
+                // back to the probe when no SpikeForm instance has run yet (a crash
+                // before Main gets that far) or none exists any more.
+                var directory = SimpleWall.Spike.SpikeLogPaths.ActiveLogDirectory ?? SimpleWall.Spike.SpikeLogPaths.Directory;
+                var path = Path.Combine(directory, "spike-log.txt");
                 var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} CRASH via {source}: {ex}{Environment.NewLine}";
-                File.AppendAllText(path, line);
+
+                // Explicit ReadWrite sharing: SpikeForm holds spike-log.txt open for the
+                // whole session via a long-lived StreamWriter (see SpikeForm.OpenLogWriter).
+                // File.AppendAllText's default share mode is too narrow to be granted
+                // concurrent access while that handle is open, which would otherwise mean
+                // a crash-time write gets silently denied at exactly the moment it matters most.
+                using (var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write(line);
+                }
             }
             catch
             {

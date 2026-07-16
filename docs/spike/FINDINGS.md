@@ -2,8 +2,8 @@
 
 Fill this in at the wall while following `RUNBOOK.md`. Short answers and
 ticks are fine -- this isn't a report, it's evidence. Bring it back along
-with `spike-log.txt` and `vlc-log.txt` (the log folder is named in the
-control window's title bar).
+with `spike-log.txt` and all `vlc-log*.txt` files (the log folder is named in
+the control window's title bar).
 
 Date/time of this run: ______________________
 
@@ -13,9 +13,10 @@ Machine (name / specs if known): ______________________
 
 ## Prerequisite install problems (if any)
 
-Only fill this in if `ndp48.exe` (or the KB4474419 / KB4019990 fallback in
-RUNBOOK step 1) refused to run or errored out. Paste the exact error text
-here, or describe the screenshot you're sending back:
+Only fill this in if `ndp48-offline.exe` refused to run or errored out, and
+neither `kb4474419-x64.msu` nor a downloaded KB4019990 (RUNBOOK step 1)
+resolved it. Paste the exact error text here, or describe the screenshot
+you're sending back:
 
 ______________________________________________________________________
 
@@ -28,9 +29,10 @@ ______________________________________________________________________
 **1. Does VLC 3.x initialize at all on this Win7 SP1 box?**
 
 - [ ] Yes, no problems
-- [ ] Yes, but only after installing .NET 4.8 / VC++ redist from `prereq\`
-- [ ] No -- app failed to start (see step 3 of RUNBOOK -- `spike-log.txt` +
-      screenshot should already be attached)
+- [ ] Yes, but only after installing .NET 4.8 from `prereq\`
+- [ ] No -- app failed to start, or the "Spike -- VLC init failed" dialog
+      appeared (see step 2 of RUNBOOK -- `spike-log.txt` + screenshot should
+      already be attached)
 
 Notes: ______________________________________________________________
 
@@ -96,7 +98,7 @@ numbers differ.
 
 ## Working decode / vout combination
 
-What ended up looking best in step 9 of the runbook (leave blank if step 6-8
+What ended up looking best in step 8 of the runbook (leave blank if step 5-7
 already looked fine with defaults):
 
 - [ ] Default settings were fine -- no changes needed
@@ -123,5 +125,5 @@ ______________________________________________________________________
 ## Files to bring back
 
 - [ ] `spike-log.txt`
-- [ ] `vlc-log.txt`
+- [ ] `vlc-log*.txt` (all of them -- there may be more than one)
 - [ ] This file, filled in

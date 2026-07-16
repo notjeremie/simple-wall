@@ -17,8 +17,13 @@ namespace SimpleWall.Spike
     /// Everything logs to spike-log.txt (path resolved at startup -- see
     /// SpikeLogPaths -- and shown in this window's title bar), because the only
     /// way evidence gets off the wall PC is as a file carried back over VNC.
-    /// libvlc's own diagnostic log is written natively to vlc-log.txt alongside it
-    /// (see CreateLibVlc) rather than bridged through a managed event handler.
+    /// libvlc's own diagnostic log is written natively via LibVLC.SetLogFile,
+    /// called once per LibVLC instance -- NOT via --file-logging/--logfile/
+    /// --logmode construction options, which are VLC 2.x-only and make
+    /// libvlc_new() return NULL on 3.x (verified: see CreateLibVlc). Each
+    /// (re)creation gets its own uniquely-named vlc-log file, because
+    /// SetLogFile truncates and step 9 of the runbook deliberately recreates
+    /// LibVLC several times to compare vout options.
     ///
     /// Throwaway: most of this is deleted in Task 9 once the real VlcWallEngine exists.
     /// </summary>
@@ -26,16 +31,19 @@ namespace SimpleWall.Spike
     {
         private static readonly string[] VoutOptions = { "default", "direct3d9", "directdraw" };
         private const string LogTimestampFormat = "yyyy-MM-dd HH:mm:ss.fff";
+        private static readonly TimeSpan FirstPictureTimeout = TimeSpan.FromSeconds(10);
 
         private readonly string _logDir;
         private readonly string _logPath;
-        private readonly string _vlcLogPath;
         private readonly object _logLock = new object();
+        private StreamWriter _logWriter;
 
         private LibVLC _libVlc;
         private MediaPlayer _player;
         private OutputWindow _outputWindow;
         private string _currentSlot; // "A", "B", or null
+        private int _libVlcInstanceIndex;
+        private string _currentVlcLogPath;
 
         // Clip-switch timing. Both stopwatches are Restart()-ed together at the
         // moment Play is clicked, so their readings share the same zero point:
@@ -66,9 +74,8 @@ namespace SimpleWall.Spike
 
         public SpikeForm()
         {
-            _logDir = SpikeLogPaths.Directory;
-            _logPath = Path.Combine(_logDir, "spike-log.txt");
-            _vlcLogPath = Path.Combine(_logDir, "vlc-log.txt");
+            _logWriter = OpenLogWriter(out _logDir, out _logPath);
+            SpikeLogPaths.ActiveLogDirectory = _logDir;
 
             // The log path goes in the title bar because the log IS the deliverable
             // of this trip -- if the operator can't find the file, the trip is wasted
@@ -92,7 +99,43 @@ namespace SimpleWall.Spike
             BuildUi();
 
             Load += (s, e) => InitializeVlc();
-            FormClosing += (s, e) => ShutdownVlc();
+            FormClosing += (s, e) => OnFormClosingCleanup();
+        }
+
+        /// <summary>
+        /// Tries to open spike-log.txt itself (not just probe the directory) in each
+        /// candidate directory in turn, keeping the first one that actually opens.
+        /// A directory being writable doesn't guarantee the specific file isn't
+        /// locked by something else -- this is the only way to find that out.
+        /// FileShare.ReadWrite so Program.cs's crash handler (a completely separate
+        /// FileStream, opened later, possibly mid-crash) can still append to the
+        /// same file while this handle is held open for the whole session.
+        /// </summary>
+        private static StreamWriter OpenLogWriter(out string resolvedDirectory, out string resolvedPath)
+        {
+            foreach (var candidate in SpikeLogPaths.CandidateDirectories())
+            {
+                try
+                {
+                    Directory.CreateDirectory(candidate);
+                    var path = Path.Combine(candidate, "spike-log.txt");
+                    var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+                    var writer = new StreamWriter(stream) { AutoFlush = true };
+                    resolvedDirectory = candidate;
+                    resolvedPath = path;
+                    return writer;
+                }
+                catch
+                {
+                    // This candidate's spike-log.txt is unusable (locked, permissions,
+                    // whatever) -- try the next directory rather than silently losing
+                    // every line for the rest of the session.
+                }
+            }
+
+            resolvedDirectory = AppDomain.CurrentDomain.BaseDirectory;
+            resolvedPath = Path.Combine(resolvedDirectory, "spike-log.txt");
+            return null; // Log() below tolerates a null writer and just updates the log pane.
         }
 
         // ----------------------------------------------------------------
@@ -329,8 +372,8 @@ namespace SimpleWall.Spike
 
             lock (_logLock)
             {
-                try { File.AppendAllText(_logPath, line + Environment.NewLine); }
-                catch { /* SpikeLogPaths already probed a writable directory at startup; this is a last-resort guard only */ }
+                try { _logWriter?.WriteLine(line); }
+                catch { /* OpenLogWriter already tried every candidate directory/file at startup; this is a last-resort guard only */ }
             }
 
             if (_logTextBox == null || _logTextBox.IsDisposed) return;
@@ -359,8 +402,7 @@ namespace SimpleWall.Spike
 
         private void InitializeVlc()
         {
-            Log($"Log file:     {_logPath}");
-            Log($"VLC log file: {_vlcLogPath}");
+            Log($"Log file: {_logPath}");
             Log("=== SimpleWall Spike starting ===");
             Log($"OS version: {Environment.OSVersion}");
             Log($"Process bitness: {(Environment.Is64BitProcess ? "x64" : "x86")}");
@@ -400,40 +442,49 @@ namespace SimpleWall.Spike
                 var vout = _voutComboBox.SelectedItem as string ?? "default";
                 var softwareDecode = _softwareDecodeCheckBox.Checked;
 
-                var libVlcOptions = new List<string>();
+                // NOTE: --file-logging / --logfile=... / --logmode=text are VLC 2.x
+                // construction options. They do NOT exist in VLC 3.x, and libvlc treats
+                // an unknown option as FATAL rather than ignoring it -- passing them
+                // makes libvlc_new() return NULL, i.e. `new LibVLC(...)` throws here.
+                // Verified directly against the shipped 3.0.21 binary: plugins\logger\
+                // contains only libconsole_logger_plugin.dll (no file logger plugin),
+                // and none of those three option strings appear anywhere in libvlc.dll,
+                // libvlccore.dll, or any of the 432 plugins. The real 3.x mechanism is
+                // LibVLC.SetLogFile(path), called AFTER construction -- see below.
+                var libVlcOptions = new List<string> { "--verbose=2" };
                 if (vout != "default") libVlcOptions.Add("--vout=" + vout);
 
-                // libvlc's own diagnostic log, written natively -- not bridged through a
-                // managed LibVLC.Log event handler. Unsubscribing a native->managed log
-                // callback while one is in flight can throw AccessViolationException,
-                // which .NET 4.8 does NOT route through AppDomain.UnhandledException --
-                // the process would just die with zero evidence. This avoids that risk
-                // entirely and is a richer artifact besides (full VLC verbosity, not
-                // just what we chose to filter to warning/error).
-                libVlcOptions.Add("--file-logging");
-                libVlcOptions.Add("--logfile=" + _vlcLogPath);
-                libVlcOptions.Add("--logmode=text");
-                libVlcOptions.Add("--verbose=2");
-
                 _libVlc = new LibVLC(libVlcOptions.ToArray());
+
+                // SetLogFile TRUNCATES on open, so each (re)creation gets its own
+                // uniquely-named file -- otherwise runbook step 8's default -> direct3d9
+                // -> directdraw sequence would leave only the LAST attempt's log,
+                // destroying exactly the failing-configuration evidence that step exists
+                // to collect.
+                _libVlcInstanceIndex++;
+                _currentVlcLogPath = Path.Combine(_logDir, $"vlc-log-{_libVlcInstanceIndex}-{vout}.txt");
+                _libVlc.SetLogFile(_currentVlcLogPath);
 
                 Log("==================================================");
                 Log($"Run/recreate at {DateTime.Now.ToString(LogTimestampFormat, CultureInfo.InvariantCulture)}");
                 Log($"LibVLC version: {_libVlc.Version}");
                 Log($"vout={vout} softwareDecode={softwareDecode}");
-                Log($"vlc-log.txt: {_vlcLogPath}");
+                Log($"vlc log file: {_currentVlcLogPath}");
+                Log("Note: libvlc rescans all bundled plugins on every (re)creation -- this");
+                Log("package ships no plugin cache. On a slow disk this can take several");
+                Log("seconds; that's normal, not a hang.");
                 Log("==================================================");
 
                 _player = new MediaPlayer(_libVlc);
-                _player.Playing += (s, e) => MarshalPlayingToUiThread();
+                _player.Playing += OnLibVlcPlaying;
                 _player.Stopped += (s, e) => Log($"MediaPlayer.Stopped (slot {_currentSlot}).");
                 _player.EncounteredError += (s, e) => Log($"MediaPlayer.EncounteredError (slot {_currentSlot}).");
 
                 // Do NOT Show() yet -- on a small/single-monitor VNC desktop this borderless
                 // 1920x256 always-on-top rectangle would land directly over the Geometry
                 // group and the Apply button before the operator ever gets a chance to move
-                // it. It's shown for the first time in PlayClip(), by which point the
-                // operator has already read the runbook step that tells them what to expect.
+                // it. It's shown for the first time in PlayClip(), before Play() is called --
+                // see the comment there for why that ordering matters.
                 _outputWindow = new OutputWindow(_player);
                 ApplyGeometry();
                 ApplyBrightness();
@@ -451,10 +502,11 @@ namespace SimpleWall.Spike
         /// <summary>
         /// Teardown order matters: stop the player first, then detach the VideoView's
         /// hwnd from it (set_hwnd(NULL) against a STOPPED player), only then dispose the
-        /// view/window, then the player, then LibVLC. Disposing the output window before
-        /// stopping the player used to hit set_hwnd(NULL) against a live player and could
-        /// hang -- and this path runs on every vout change, which is exactly the moment
-        /// the operator reaches for it because something already looks broken.
+        /// view/window, then close libvlc's log file, then dispose the player, then
+        /// LibVLC. Disposing the output window before stopping the player used to hit
+        /// set_hwnd(NULL) against a live player and could hang -- and this path runs on
+        /// every vout change, which is exactly the moment the operator reaches for it
+        /// because something already looks broken.
         /// </summary>
         private void ShutdownVlc()
         {
@@ -480,8 +532,21 @@ namespace SimpleWall.Spike
 
             if (_libVlc != null)
             {
+                try { _libVlc.CloseLogFile(); } catch { /* best effort during teardown */ }
                 _libVlc.Dispose();
                 _libVlc = null;
+            }
+        }
+
+        private void OnFormClosingCleanup()
+        {
+            ShutdownVlc();
+
+            lock (_logLock)
+            {
+                try { _logWriter?.Flush(); _logWriter?.Dispose(); }
+                catch { /* best effort -- the process is exiting anyway */ }
+                _logWriter = null;
             }
         }
 
@@ -505,6 +570,18 @@ namespace SimpleWall.Spike
             }
 
             Log($"--- Play {slot} requested: {path} ---");
+
+            // Shown BEFORE Play(), not after: libvlc builds its D3D9/DirectDraw vout
+            // against whatever window it's handed at that moment, and a window that's
+            // parked/invisible then and only reparented/shown afterwards is untested
+            // territory on a one-shot trip. Costs nothing here -- geometry is already
+            // applied by CreateLibVlc, and SpikeForm being TopMost means this doesn't
+            // lock the operator out of Apply/Play/Stop.
+            if (_outputWindow != null && !_outputWindow.Visible)
+            {
+                _outputWindow.Show();
+                Log("Output window shown.");
+            }
 
             var media = new Media(_libVlc, path, FromType.FromPath);
             media.AddOption(":input-repeat=65535"); // loop indefinitely
@@ -531,12 +608,6 @@ namespace SimpleWall.Spike
             _player.SetAdjustInt(VideoAdjustOption.Enable, 1);
             ApplyBrightness();
             ApplyContrast();
-
-            if (_outputWindow != null && !_outputWindow.Visible)
-            {
-                _outputWindow.Show();
-                Log("Output window shown (first Play).");
-            }
         }
 
         private void StopPlayback()
@@ -551,29 +622,40 @@ namespace SimpleWall.Spike
         /// VLC event callbacks run on libvlc's own thread, and libvlc's docs forbid
         /// re-entering libvlc from inside one of those callbacks -- it's a known
         /// deadlock source, and Playing is the success path: it fires the very first
-        /// time anything works. So this callback does nothing itself except post a
-        /// delegate to the UI thread and return immediately; all the actual work
-        /// (which touches _player.Media / media.Tracks) happens over there instead.
+        /// time anything works. Reading a Stopwatch is pure managed code (no libvlc
+        /// call at all), so it's captured HERE, still on the callback thread, for an
+        /// accurate GAP number -- if this were deferred to the UI thread instead, GAP
+        /// would measure "click to Playing" PLUS "however long the UI thread was busy
+        /// before it got around to pumping the posted message" (that thread does a
+        /// synchronous file write per log line), which would quietly pollute the one
+        /// number this whole exercise depends on. Everything that DOES touch libvlc
+        /// (_player.Media, media.Tracks) still waits for the UI thread.
         /// </summary>
-        private void MarshalPlayingToUiThread()
+        private void OnLibVlcPlaying(object sender, EventArgs e)
         {
+            long? gapMs = null;
+            if (_gapStopwatch.IsRunning)
+            {
+                _gapStopwatch.Stop();
+                gapMs = _gapStopwatch.ElapsedMilliseconds;
+            }
+
             try
             {
-                if (IsHandleCreated) BeginInvoke((Action)OnPlayingOnUiThread);
+                if (IsHandleCreated) BeginInvoke((Action)(() => OnPlayingOnUiThread(gapMs)));
             }
             catch (ObjectDisposedException) { }
             catch (InvalidOperationException) { }
         }
 
-        private void OnPlayingOnUiThread()
+        private void OnPlayingOnUiThread(long? gapMs)
         {
             Log($"MediaPlayer.Playing (slot {_currentSlot}).");
 
-            if (_gapStopwatch.IsRunning)
+            if (gapMs.HasValue)
             {
-                _gapStopwatch.Stop();
                 var fromLabel = _switchFromSlot ?? "START";
-                Log($"GAP {fromLabel}->{_currentSlot}: {_gapStopwatch.ElapsedMilliseconds} ms");
+                Log($"GAP {fromLabel}->{_currentSlot}: {gapMs.Value} ms");
             }
 
             LogResolutionIfKnown();
@@ -583,9 +665,14 @@ namespace SimpleWall.Spike
         /// Polls on a UI-thread timer (not a libvlc callback) until the player reports
         /// an active video output -- closer to "a frame is actually on the wall" than
         /// the Playing state-machine transition above, which can fire slightly before
-        /// that. 5ms is what was asked for; real resolution is closer to Windows'
-        /// ordinary timer granularity, but the Stopwatch reading taken at each tick is
-        /// still far tighter than DateTime.Now's ~15.6ms granularity would give.
+        /// that. Note: System.Windows.Forms.Timer has the same ~15.6ms floor as
+        /// DateTime.Now regardless of the 5ms Interval requested here, so this value is
+        /// quantized to that granularity -- a coarse indicator, not a precise one. GAP
+        /// above is unaffected: that's a genuine Stopwatch read taken directly in the
+        /// libvlc callback, not on a timer tick. If no vout ever comes up, this logs an
+        /// explicit timeout rather than staying silent -- "nothing was logged" would
+        /// otherwise be ambiguous between "the timer never ran" and "no vout ever
+        /// appeared", and the latter is precisely the interesting result.
         /// </summary>
         private void FirstPictureTimerTick(object sender, EventArgs e)
         {
@@ -593,6 +680,13 @@ namespace SimpleWall.Spike
             {
                 _firstPictureTimer.Stop();
                 Log($"FIRST PICTURE: {_firstPictureStopwatch.ElapsedMilliseconds} ms (slot {_currentSlot})");
+                return;
+            }
+
+            if (_firstPictureStopwatch.Elapsed > FirstPictureTimeout)
+            {
+                _firstPictureTimer.Stop();
+                Log($"FIRST PICTURE: NOT REACHED after {(int)FirstPictureTimeout.TotalSeconds}s (slot {_currentSlot})");
             }
         }
 

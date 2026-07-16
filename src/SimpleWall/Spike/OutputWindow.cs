@@ -36,15 +36,21 @@ namespace SimpleWall.Spike
 
         private void OnFormClosing(object sender, FormClosingEventArgs e)
         {
-            if (!_allowClose)
-            {
-                // Borderless and always-on-top: there is no legitimate way for the
-                // operator to close this window directly. If it ever happens anyway
-                // (e.g. a stray Alt+F4 while it somehow has focus), refuse -- otherwise
-                // SpikeForm is left holding a non-null but disposed _outputWindow, and
-                // the next ApplyGeometry() throws ObjectDisposedException on the UI thread.
-                e.Cancel = true;
-            }
+            if (_allowClose) return;
+
+            // Windows logging off or shutting down, or the operator ending the process
+            // from Task Manager, must NOT be blocked -- refusing those would surface as
+            // "this program is preventing shutdown" on the wall PC, which is worse than
+            // the ObjectDisposedException risk this guard exists to prevent.
+            if (e.CloseReason == CloseReason.WindowsShutDown || e.CloseReason == CloseReason.TaskManagerClosing)
+                return;
+
+            // Borderless and always-on-top: there is no legitimate way for the operator
+            // to close this window directly otherwise. If it ever happens anyway (e.g. a
+            // stray Alt+F4 while it somehow has focus), refuse -- otherwise SpikeForm is
+            // left holding a non-null but disposed _outputWindow, and the next
+            // ApplyGeometry() throws ObjectDisposedException on the UI thread.
+            e.Cancel = true;
         }
 
         /// <summary>
