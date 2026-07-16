@@ -6,3 +6,4 @@ TestResults/
 *.log
 config.json
 dist/
+artifacts/

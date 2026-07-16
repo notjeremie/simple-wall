@@ -11,6 +11,10 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{AE660803
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SimpleWall.Tests", "tests\SimpleWall.Tests\SimpleWall.Tests.csproj", "{BBF5FF39-69DB-483D-BD79-4011FF233C3D}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tools", "tools", "{260FD1B9-FB5E-4232-AC29-E97697469D51}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RenderShot", "tools\RenderShot\RenderShot.csproj", "{70D968FC-DA6B-4ECB-B78D-CC8060DEE13B}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -28,9 +32,14 @@ Global
 		{BBF5FF39-69DB-483D-BD79-4011FF233C3D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{BBF5FF39-69DB-483D-BD79-4011FF233C3D}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{BBF5FF39-69DB-483D-BD79-4011FF233C3D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{70D968FC-DA6B-4ECB-B78D-CC8060DEE13B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{70D968FC-DA6B-4ECB-B78D-CC8060DEE13B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{70D968FC-DA6B-4ECB-B78D-CC8060DEE13B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{70D968FC-DA6B-4ECB-B78D-CC8060DEE13B}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{9D50ED38-6F57-4A3B-8126-9F2CC9FD59A0} = {511902A0-6BAB-4B6E-9258-C4E325FB6F24}
 		{BBF5FF39-69DB-483D-BD79-4011FF233C3D} = {AE660803-85F3-4789-8A14-14318E513A12}
+		{70D968FC-DA6B-4ECB-B78D-CC8060DEE13B} = {260FD1B9-FB5E-4232-AC29-E97697469D51}
 	EndGlobalSection
 EndGlobal

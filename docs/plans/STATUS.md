@@ -45,7 +45,9 @@ ssh wallvm 'cmd /c "pushd \\Mac\Home\Documents\Coding\simple-wall && dotnet test
 - The VM is **French**: `échec : 0` = ZERO failures (good), `réussite : 54` = 54 passed, `La génération a réussi` = build ok.
 - The `wallvm` SSH alias is configured (key `~/.ssh/simple-wall-vm`). SDK is per-user at `C:\Users\notjeremie\.dotnet`.
 - Known trap: the SMB share occasionally serves a stale build. If a fix "isn't taking effect", `dotnet build --no-incremental`.
-- **If ssh times out, the VM is simply off.** `prlctl start` is Parallels Pro-only (same wall as the screenshot attempts below), so the user has to start it from the Parallels GUI. `prlctl list -a` reads status fine without Pro.
+- **If ssh times out, the VM is simply off.** `prlctl start` is Parallels Pro-only, so the user has to start it from the Parallels GUI. `prlctl list -a` reads status fine without Pro.
+- ssh occasionally answers `Permission denied (publickey)` or the share briefly vanishes (`Le chemin d'accès spécifié est introuvable`) for one call, then works again. It's flaky, not broken — retry once before investigating.
+- Reading an exit code over ssh: use `cmd /v:on /c "... & echo EXIT=!ERRORLEVEL!"`. Plain `%ERRORLEVEL%` is expanded when the line is *parsed*, so it reports the previous command's code and will happily tell you a failing command passed. Don't pipe to `findstr` either — you'd read findstr's code instead.
 
 ## The spike changed the design. Task 9 must honour all of this
 
@@ -73,13 +75,34 @@ Every task: **implementer → spec-compliance review → code-quality review**, 
 
 Implementers are explicitly told to push back rather than implement something wrong. Several did, correctly. **Keep doing this.**
 
-## The gap I still owe
+**Any task that touches a window: render it with `tools/RenderShot` and actually look at the PNG before calling it done.** Reviews aimed at the hard part (VLC) sailed past a window that was visibly broken. There is no longer an excuse for shipping a UI nobody has seen.
 
-**Nobody could render the UI.** The spike's control window shipped with every GroupBox collapsed to a sliver — `Width=880` and `AutoSize=true` together, with `Dock`ed children — because it was built and reviewed entirely over SSH where there is no GUI. Three rounds of paranoid review, all aimed at VLC; none looked at the thing the operator touches first. **The user found it in ten seconds by looking at the screen.**
+## The render gap is closed — use `tools/RenderShot`
 
-I tried three ways to screenshot the VM (`prlctl exec` — Pro-only; `schtasks /it` + PowerShell `CopyFromScreen` — task fired, never produced output; copying the script locally first — path error) and stopped rather than burn the user's live VNC session.
+**We can now look at a window over SSH, with no desktop session.** `tools/RenderShot` renders any
+`Form` to a PNG on the Mac share and prints its layout tree. Read `tools/RenderShot/README.md`
+before Task 10; the short version:
 
-**Before Task 10 (the real UI) ships anywhere, solve this.** Options not yet tried: VNC into the Parallels VM from the Mac and screencapture; a WinForms test harness that renders a form to a bitmap headlessly and saves a PNG (probably the best one — no session/window-station problem); Parallels Pro for `prlctl exec`. The user should not be the render check twice.
+```bash
+ssh wallvm 'cmd /c "pushd \\Mac\Home\Documents\Coding\simple-wall && tools\RenderShot\bin\Debug\net48\RenderShot.exe SimpleWall.Spike.SpikeForm artifacts\render\spike.png"'
+```
+
+It exits `3` if any control collapsed. **The exit code is not the point — open the PNG.** It cannot
+tell you a window is ugly or unusable, only that something reached zero size.
+
+It never shows the form and never fires `Load`, deliberately: `Load` is where the real windows start
+VLC, and a layout check that needs a video card is a layout check nobody runs. Known fidelity limits
+(child 3D borders, title bar, and empty read-only TextBoxes render as nothing) are in the README —
+they're `WM_PRINT` semantics, not bugs. Don't chase them.
+
+**It is validated against the real bug, not just against working windows.** Rendering `cea172f^`
+(the version the user caught) reproduces it exactly: `GroupBox 16x180`, nine collapsed controls,
+EXIT=3, four useless slivers plainly visible in the PNG. If you change how it realises a form,
+re-run that and confirm it still fails. The README has the commands.
+
+What didn't work, so nobody re-tries it: `prlctl exec`/`prlctl start` are Parallels **Pro-only**;
+`schtasks /it` + PowerShell `CopyFromScreen` fires but never produces output (window station).
+Neither is needed now — rendering never touches a desktop.
 
 ## Deliberately cut — do not re-add without asking
 
