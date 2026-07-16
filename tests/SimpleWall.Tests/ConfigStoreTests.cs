@@ -139,6 +139,8 @@ namespace SimpleWall.Tests
             Assert.Equal(1.0f, config.Brightness);
             Assert.NotNull(config.Clips);
             Assert.Empty(config.Clips);
+            Assert.NotNull(config.Tasks);
+            Assert.Empty(config.Tasks);
             Assert.False(QuarantineFileExists(path), "a merely-old-or-newer config is not corrupt");
         }
 
