@@ -1,6 +1,7 @@
 bin/
 obj/
 .vs/
+TestResults/
 *.user
 *.log
 config.json

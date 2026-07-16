@@ -29,7 +29,7 @@ How the environment actually ended up, and why (none of this was the first plan)
 | Running commands in the VM | **SSH**, not `prlctl exec` — that needs Parallels Pro. Host alias `wallvm` on the Mac (key `~/.ssh/simple-wall-vm`). OpenSSH Server was installed from the GitHub zip because Feature-on-Demand *and* winget both failed on this ARM VM |
 | .NET SDK | **8.0.423 ARM64, per-user** at `C:\Users\notjeremie\.dotnet` via `dotnet-install.ps1`. An SSH session has a non-elevated token, so `winget install` gives `Accès refusé`; the per-user script needs no admin |
 | .NET Framework 4.8 targeting pack | **Not installed — not needed.** `Microsoft.NETFramework.ReferenceAssemblies` (PackageReference) supplies the reference assemblies. This is required in every project targeting net48; without it the build fails on a machine with no targeting pack |
-| Repo path in the VM | `\\Mac\Home\Documents\Coding\simple-wall` (Parallels shared folder). Builds run over UNC |
+| Repo path in the VM | `\\Mac\Home\Documents\Coding\simple-wall` (Parallels shared folder). **Use `pushd`, never `cd /d`** — cmd.exe refuses UNC paths as a working directory outright ("CMD ne prend pas les chemins UNC comme répertoires en cours"); `pushd` temporarily maps them to a drive letter and works |
 | Windows language | **French.** `icacls`/`net` group names are localized — use SIDs (`*S-1-5-32-544`) not `"Administrators"` |
 
 Known-broken in that VM, worked around, don't retry: Feature-on-Demand downloads (`0x800f0950`) and `winget install` of anything machine-wide. Ordinary HTTPS downloads from Microsoft's CDN and GitHub work fine — it's the update channel that's sick, not the network.
@@ -42,7 +42,7 @@ Complete. The build loop works from the Mac with no human in it:
 
 ```bash
 ssh wallvm "dotnet --version"          # 8.0.423
-ssh wallvm 'cmd /c "cd /d \\Mac\Home\Documents\Coding\simple-wall && dotnet test"'
+ssh wallvm 'cmd /c "pushd \\Mac\Home\Documents\Coding\simple-wall && dotnet test"'
 ```
 
 Verified by probe: `net48` builds with `UseWindowsForms`, and net48 xUnit tests execute on ARM64. See the toolchain table above for how it's wired and which routes are dead ends.
@@ -117,7 +117,7 @@ namespace SimpleWall
 **Step 4: Verify it builds**
 
 ```bash
-ssh wallvm 'cmd /c "cd /d \\Mac\Home\Documents\Coding\simple-wall && dotnet build src\SimpleWall\SimpleWall.csproj"'
+ssh wallvm 'cmd /c "pushd \\Mac\Home\Documents\Coding\simple-wall && dotnet build src\SimpleWall\SimpleWall.csproj"'
 ```
 Expected: `La génération a réussi` (French VM) — 0 errors. This combination was probed on 2026-07-16 and works; a failure here means the csproj differs from the probe, not that the toolchain is broken.
 
@@ -167,7 +167,7 @@ This asserts nothing about the product. Its job is to prove `dotnet test` works 
 **Step 7: Run the tests**
 
 ```bash
-ssh wallvm 'cmd /c "cd /d \\Mac\Home\Documents\Coding\simple-wall && dotnet test"'
+ssh wallvm 'cmd /c "pushd \\Mac\Home\Documents\Coding\simple-wall && dotnet test"'
 ```
 Expected: `Réussi! - échec : 0, réussite : 1`. (The VM is French — "échec" is failures, "réussite" is passes. Read them the right way round.)
 
@@ -273,7 +273,7 @@ private static void Main(string[] args)
 **Step 4: Build and smoke-test in the VM**
 
 ```bash
-ssh wallvm 'cmd /c "cd /d \\Mac\Home\Documents\Coding\simple-wall && dotnet build src\SimpleWall\SimpleWall.csproj"'
+ssh wallvm 'cmd /c "pushd \\Mac\Home\Documents\Coding\simple-wall && dotnet build src\SimpleWall\SimpleWall.csproj"'
 ```
 Run it in the VM against any mp4. Expect video. Expect it to be slow — VLC x64 is emulating on ARM. **Do not tune performance here; VM performance is meaningless.** This step only proves the code runs before you carry it to the wall.
 
@@ -376,7 +376,7 @@ That third test is the one that matters. "Lose the layout, not the evening" is a
 **Step 2: Run the tests, verify they fail**
 
 ```bash
-ssh wallvm 'cmd /c "cd /d \\Mac\Home\Documents\Coding\simple-wall && dotnet test"'
+ssh wallvm 'cmd /c "pushd \\Mac\Home\Documents\Coding\simple-wall && dotnet test"'
 ```
 Expected: compile failure — `ConfigStore` does not exist. That's a legitimate red.
 
@@ -1493,7 +1493,7 @@ The only task that proves the product works. Everything before it is preparation
 **Step 1: Release build**
 
 ```bash
-ssh wallvm 'cmd /c "cd /d \\Mac\Home\Documents\Coding\simple-wall && dotnet build -c Release src\SimpleWall\SimpleWall.csproj"'
+ssh wallvm 'cmd /c "pushd \\Mac\Home\Documents\Coding\simple-wall && dotnet build -c Release src\SimpleWall\SimpleWall.csproj"'
 ```
 Confirm the output folder contains the EXE plus the VLC natives.
 
