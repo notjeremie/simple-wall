@@ -1,7 +1,7 @@
 # simple-wall — where things stand
 
-**Last updated:** 2026-07-16, end of session 1
-**Tests:** 54 passing, 0 failing
+**Last updated:** 2026-07-17, session 2
+**Tests:** 78 passing, 0 failing
 **Branch:** `master` (user explicitly consented to committing straight to master)
 
 ## Read these first, in this order
@@ -21,7 +21,7 @@
 | 4 | Clip library (stable slots) | ✅ done |
 | 5 | Command path (`IWallEngine`) | ✅ done |
 | 6 | Scheduler due-calculation | ✅ done |
-| 7 | **OSC message parsing** | ⬅ **NEXT — not started** |
+| 7 | OSC message parsing | ✅ done |
 | 8 | Output geometry validation | ✅ done |
 | 9 | Real VLC engine + output window | blocked on nothing; **spec changed by the spike, see below** |
 | 10 | Clip grid UI | pending |
@@ -31,7 +31,9 @@
 | 14 | Settings, autostart, logging | pending |
 | 15 | Packaging + Win7 acceptance | pending |
 
-**Next action: Task 7 (OSC parsing).** Pure logic, TDD, no hardware. Full spec is in the implementation plan. The one trap: `/brightness 0` is a legitimate blackout command and must NOT be swallowed by the button-release guard that ignores a `0` argument on triggers.
+**Next action: Task 9 (real VLC engine + output window).** The biggest remaining task, and the spike rewrote its spec — read "The spike changed the design" below before writing a line of it. It also deletes `src/SimpleWall/Spike/`.
+
+Task 7 notes: the trap was real and the plan's own sample code fell into it — `IsButtonRelease` ran before the address switch, swallowing `/brightness 0`. The fix is structural: the release guard now lives in `Trigger()`, which wraps only the valueless addresses; `/brightness` and `/contrast` never see it, because `0` is data there. Both structures were run against the tests to prove the guard bites.
 
 ## How to build and test (nothing builds on the Mac)
 
@@ -43,6 +45,7 @@ ssh wallvm 'cmd /c "pushd \\Mac\Home\Documents\Coding\simple-wall && dotnet test
 - The VM is **French**: `échec : 0` = ZERO failures (good), `réussite : 54` = 54 passed, `La génération a réussi` = build ok.
 - The `wallvm` SSH alias is configured (key `~/.ssh/simple-wall-vm`). SDK is per-user at `C:\Users\notjeremie\.dotnet`.
 - Known trap: the SMB share occasionally serves a stale build. If a fix "isn't taking effect", `dotnet build --no-incremental`.
+- **If ssh times out, the VM is simply off.** `prlctl start` is Parallels Pro-only (same wall as the screenshot attempts below), so the user has to start it from the Parallels GUI. `prlctl list -a` reads status fine without Pro.
 
 ## The spike changed the design. Task 9 must honour all of this
 
@@ -66,6 +69,7 @@ Every task: **implementer → spec-compliance review → code-quality review**, 
 - I specified VLC **2.x** logging options (`--file-logging`) that make `libvlc_new` return NULL. The app would have opened a window and done nothing, forever, on arrival at the wall. A reviewer proved it with a harness.
 - I designed a config save that couldn't survive the power cut it was written for: `WriteAllText` doesn't flush, so the likely artifact is a **zero-length** file — precisely the input that skipped quarantine and then got overwritten.
 - I wrote a scheduler that skips any task whose moment falls on the other side of a midnight tick. An implementer proved it by running my own code against a test it wrote.
+- I clamped OSC brightness with `Math.Max(0f, Math.Min(2f, value))`, which **does not clamp `NaN`** — both methods propagate it. `/brightness NaN` off the network would have escaped the range and landed on a native VLC filter parameter, on an unattended machine, for months. A reviewer proved it on the VM's own net48 runtime rather than asserting it from memory. **Two of the three defects in this task were in the plan's sample code, not the implementation** — the plan is a draft, not a spec to type in.
 
 Implementers are explicitly told to push back rather than implement something wrong. Several did, correctly. **Keep doing this.**
 
