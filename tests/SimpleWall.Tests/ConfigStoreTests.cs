@@ -143,8 +143,15 @@ namespace SimpleWall.Tests
         }
 
         [Fact]
-        public void FailedSaveLeavesPreviousConfigLoadable()
+        public void SaveThrowsAndLeavesConfigUntouchedWhenTempFileIsLocked()
         {
+            // NOTE: this pins the documented throwing contract and that a failed write to the
+            // .tmp file is non-destructive - it does NOT cover the atomic-replace window
+            // (File.Replace vs. the old delete-then-move) that CRITICAL 1 fixed. That window
+            // is only observable by killing the process mid-Save, which no cheap in-process
+            // test can do: locking .tmp makes Save() throw at the temp-write step, before
+            // config.json is ever touched, and the old delete-then-move code threw there too.
+            // Don't mistake this green for coverage of the atomicity fix.
             var path = TempFile();
             var store = new ConfigStore(path);
 

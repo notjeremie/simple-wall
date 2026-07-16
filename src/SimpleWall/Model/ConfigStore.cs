@@ -7,56 +7,85 @@ namespace SimpleWall.Model
     public class ConfigStore
     {
         private readonly string _path;
-        private readonly object _gate = new object();
+
+        // Static, not per-instance: UI, OSC and the scheduler will each construct their own
+        // ConfigStore over the same path (Task 12/13). A per-instance gate would let two
+        // instances race on the same "_path + .tmp" - best case an unhandled IOException on
+        // a thread-pool thread kills the whole process; worst case one save's Replace() lands
+        // on top of another's half-truncated temp file and config.json ends up zero-length.
+        // A single static gate serialises every Save()/Load() regardless of how many
+        // ConfigStore instances exist. Saves are rare and millisecond-scale, so over-locking
+        // across hypothetical multiple config paths costs nothing.
+        private static readonly object _gate = new object();
 
         public ConfigStore(string path) { _path = path; }
 
         public WallConfig Load()
         {
-            if (!File.Exists(_path)) return new WallConfig();
+            lock (_gate)
+            {
+                if (!File.Exists(_path)) return new WallConfig();
 
-            string text;
-            try
-            {
-                text = File.ReadAllText(_path);
-            }
-            catch (IOException)
-            {
-                // Locked by AV/backup software or similar at the moment we tried to read it -
-                // that is not corruption. Return defaults for this run but leave the file
-                // alone: quarantining it here would destroy a perfectly good config.
-                return new WallConfig();
-            }
-            catch (UnauthorizedAccessException)
-            {
-                return new WallConfig();
-            }
-
-            try
-            {
-                // Explicit NullValueHandling.Ignore: a JSON property present but set to null
-                // (e.g. "Clips": null) must not overwrite the collection initializer with null -
-                // that would NRE the whole app on next startup. Missing/null fields keep their
-                // WallConfig() defaults instead.
-                var settings = new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore };
-                var config = JsonConvert.DeserializeObject<WallConfig>(text, settings);
-                if (config == null)
+                string text;
+                try
                 {
-                    // Newtonsoft returns null (no exception) for empty/whitespace-only content.
-                    // That is corruption too, and the one shape most likely to follow a power
-                    // cut, so it must go through the same quarantine path as malformed JSON.
+                    // Eager read is load-bearing: because ReadAllText fully reads the file and
+                    // closes the handle before returning, the parse step below never touches a
+                    // file handle, so an IOException from a locked/in-use file is structurally
+                    // impossible there. If this is ever changed to a streaming reader (e.g.
+                    // JsonTextReader over File.OpenText), an IOException mid-parse would fall
+                    // into the parse catch below and get quarantined as "corrupt" - silently
+                    // reintroducing the bug where a merely-locked, perfectly good config gets
+                    // renamed to .bad.
+                    text = File.ReadAllText(_path);
+                }
+                catch (IOException)
+                {
+                    // Locked by AV/backup software or similar at the moment we tried to read it -
+                    // that is not corruption. Return defaults for this run but leave the file
+                    // alone: quarantining it here would destroy a perfectly good config.
+                    return new WallConfig();
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    return new WallConfig();
+                }
+                catch (Exception)
+                {
+                    // Anything else unexpected reading the file (SecurityException,
+                    // NotSupportedException, ...) - still not corruption, and this method's
+                    // whole job is to never refuse to start. Same "leave it alone" handling
+                    // as the specific IO cases above, restored here by construction rather
+                    // than by an argument about which exception types are reachable.
+                    return new WallConfig();
+                }
+
+                try
+                {
+                    // Explicit NullValueHandling.Ignore: a JSON property present but set to null
+                    // (e.g. "Clips": null) must not overwrite the collection initializer with null -
+                    // that would NRE the whole app on next startup. Missing/null fields keep their
+                    // WallConfig() defaults instead.
+                    var settings = new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore };
+                    var config = JsonConvert.DeserializeObject<WallConfig>(text, settings);
+                    if (config == null)
+                    {
+                        // Newtonsoft returns null (no exception) for empty/whitespace-only content.
+                        // That is corruption too, and the one shape most likely to follow a power
+                        // cut, so it must go through the same quarantine path as malformed JSON.
+                        Quarantine();
+                        return new WallConfig();
+                    }
+                    return config;
+                }
+                catch (Exception)
+                {
+                    // Malformed JSON (or anything else unexpected at parse time, now that IO
+                    // failures have already been handled above) is corruption: never refuse to
+                    // start, but keep the bad file around for diagnosis.
                     Quarantine();
                     return new WallConfig();
                 }
-                return config;
-            }
-            catch (Exception)
-            {
-                // Malformed JSON (or anything else unexpected at parse time, now that IO
-                // failures have already been handled above) is corruption: never refuse to
-                // start, but keep the bad file around for diagnosis.
-                Quarantine();
-                return new WallConfig();
             }
         }
 
