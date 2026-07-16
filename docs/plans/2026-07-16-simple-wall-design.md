@@ -34,8 +34,8 @@ Rejected: Electron (dropped Win7 in v23), Python + PyQt5 (pins the toolchain to 
 
 Two windows, one engine.
 
-- **Control window** — main monitor. Clip grid, transport, sliders, scheduler, settings.
-- **Output window** — borderless, no title bar, always-on-top. Dragged onto the LED strip and sized to it once; geometry persists.
+- **Control window** — main monitor. Clip grid, transport, sliders, scheduler, settings. An **ordinary window: NOT always-on-top** — the operator needs to browse Explorer for clips without it fighting them. (The spike made this window top-most, but only to work around its own wrong geometry default putting the output window on top of the desktop. With the output on the LED display at X=1920 the two never overlap, and the hack must not survive into the product.)
+- **Output window** — borderless, no title bar, **always-on-top**. This one genuinely needs it: it must sit above everything else on the wall. Positioned on the LED strip and sized to it once; geometry persists.
 - **Engine** — a single VLC media player instance attached to the output window's handle. Video decodes and draws directly there with hardware acceleration; the control window never touches video pixels.
 
 There are **three input sources — mouse, OSC and scheduler — and one command path** into the engine. A scheduled "play clip 7" and a clicked box are the same call. The UI reflects engine state rather than its own, so the grid stays correct whether the Stream Deck or the clock is what changed things.
@@ -61,7 +61,9 @@ Dynamic, not a fixed field of empties. Starts empty with a trailing **+** tile.
 - Ceiling of 50 boxes; the **+** tile disappears at the limit.
 - Grid reflows to window width — boxes are a fixed size, so a wider window fits more per row.
 
-Each box shows a thumbnail (first frame, extracted once and cached to disk), the filename, and its **stable slot number** in the corner.
+Each box shows a **thumbnail**, the filename, and its **stable slot number** in the corner.
+
+The thumbnail is the point, not decoration — with clips named like `INNONATION_WALL_3.mp4` and `WALL_BEFORE_SUNSET_1964X256.mp4`, filenames alone don't tell you what's on screen. It's the first frame, extracted once via VLC's snapshot and cached to disk (keyed by path + last-write-time, so replacing a file re-thumbnails it). Extraction is async and never blocks startup: a wall that takes ten seconds to open because it's decoding fifty first-frames is a worse wall.
 
 **Stable slot numbers**: a box keeps its number for life. Removing a box does not renumber the others; a new box takes the lowest free number. The number on the box is the OSC address, so a Stream Deck mapping never silently drifts when the grid is edited.
 
