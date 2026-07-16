@@ -20,41 +20,34 @@
 2. **The VM proves logic; only the Win7 box proves playback.** A green test suite in the VM says nothing about whether VLC decodes on Win7. That's why Task 2 exists.
 3. **Task 2 is a risk spike and comes before almost everything.** If VLC can't do what we need on Win7, every later task is wasted work. Find out in day one, not week six.
 
-**Uncertainty flagged honestly:** SDK-style projects targeting `net48` with `<UseWindowsForms>true</UseWindowsForms>` may or may not work on the installed SDK version. Task 1 Step 4 verifies this explicitly. If it fails, the fallback is plain `<Reference Include="System.Windows.Forms" />` — documented in that task. Do not assume; check.
+**Toolchain: verified 2026-07-16, not assumed.** The earlier uncertainty about `net48` + `UseWindowsForms` is resolved — it builds, and net48 xUnit tests run on ARM64 (both AnyCPU and x64). Probed before any task was dispatched.
+
+How the environment actually ended up, and why (none of this was the first plan):
+
+| Thing | Resolution |
+|---|---|
+| Running commands in the VM | **SSH**, not `prlctl exec` — that needs Parallels Pro. Host alias `wallvm` on the Mac (key `~/.ssh/simple-wall-vm`). OpenSSH Server was installed from the GitHub zip because Feature-on-Demand *and* winget both failed on this ARM VM |
+| .NET SDK | **8.0.423 ARM64, per-user** at `C:\Users\notjeremie\.dotnet` via `dotnet-install.ps1`. An SSH session has a non-elevated token, so `winget install` gives `Accès refusé`; the per-user script needs no admin |
+| .NET Framework 4.8 targeting pack | **Not installed — not needed.** `Microsoft.NETFramework.ReferenceAssemblies` (PackageReference) supplies the reference assemblies. This is required in every project targeting net48; without it the build fails on a machine with no targeting pack |
+| Repo path in the VM | `\\Mac\Home\Documents\Coding\simple-wall` (Parallels shared folder). Builds run over UNC |
+| Windows language | **French.** `icacls`/`net` group names are localized — use SIDs (`*S-1-5-32-544`) not `"Administrators"` |
+
+Known-broken in that VM, worked around, don't retry: Feature-on-Demand downloads (`0x800f0950`) and `winget install` of anything machine-wide. Ordinary HTTPS downloads from Microsoft's CDN and GitHub work fine — it's the update channel that's sick, not the network.
 
 ---
 
-## Task 0: Dev environment
+## Task 0: Dev environment — ✅ DONE 2026-07-16
 
-Manual, one-off, no commit. Nothing else can proceed until `dotnet build` works in the VM.
-
-**Step 1: Start Parallels and confirm a Windows VM exists**
-
-On the Mac:
-```bash
-open -a "Parallels Desktop"
-"/Applications/Parallels Desktop.app/Contents/MacOS/prlctl" list -a
-```
-Expected: a Windows 11 VM listed. If none exists, create one (Parallels offers a one-click Windows 11 ARM download). Note the VM name — every later command uses it.
-
-**Step 2: Install the .NET SDK in the VM**
-
-Inside Windows, install the current .NET SDK (winget: `winget install Microsoft.DotNet.SDK.8`). The SDK is the build tool; the *app* still targets `net48`. Building `net48` requires the .NET Framework 4.8 targeting pack — install Visual Studio 2022 Community with the ".NET desktop development" workload, which brings it, or install the standalone Developer Pack.
-
-**Step 3: Verify the toolchain from the Mac**
+Complete. The build loop works from the Mac with no human in it:
 
 ```bash
-"/Applications/Parallels Desktop.app/Contents/MacOS/prlctl" exec "<VM-NAME>" "dotnet --version"
+ssh wallvm "dotnet --version"          # 8.0.423
+ssh wallvm 'cmd /c "cd /d \\Mac\Home\Documents\Coding\simple-wall && dotnet test"'
 ```
-Expected: a version number. This is the loop that makes TDD possible from here — if `prlctl exec` doesn't work, every build becomes copy-paste and the plan slows to a crawl. Fix it now.
 
-**Step 4: Share the repo into the VM**
+Verified by probe: `net48` builds with `UseWindowsForms`, and net48 xUnit tests execute on ARM64. See the toolchain table above for how it's wired and which routes are dead ends.
 
-Parallels shares the Mac home directory into Windows by default (`\\Mac\Home\...`). Confirm the repo is visible from the VM and note the path. Code is edited on the Mac; builds run in the VM against the same files.
-
-**Step 5: Confirm access to the Win7 machine**
-
-Confirm how files reach the wall PC — network share, USB stick, whatever. Task 2 needs to copy a build onto it. Knowing this now avoids discovering it mid-spike.
+**Still outstanding — needed for Task 2, not before:** how files reach the Win7 wall PC (network share, USB stick?), and physical access to that machine and the wall. Nothing between here and Task 2 needs it.
 
 ---
 
@@ -93,9 +86,12 @@ config.json
     <LangVersion>latest</LangVersion>
     <AssemblyName>SimpleWall</AssemblyName>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
 </Project>
 ```
-`PlatformTarget` x64 is load-bearing — see "Read this before Task 1".
+Both are load-bearing. `PlatformTarget` x64 — see "Read this before Task 1". `Microsoft.NETFramework.ReferenceAssemblies` — the VM has no targeting pack (installing one needs admin, which an SSH session doesn't have), so this package supplies the reference assemblies instead. Verified working. It goes in **every** net48 project, app and tests alike.
 
 **Step 3: Minimal Program.cs**
 
@@ -118,21 +114,12 @@ namespace SimpleWall
 }
 ```
 
-**Step 4: Verify the WinForms/net48 combination builds**
+**Step 4: Verify it builds**
 
 ```bash
-prlctl exec "<VM-NAME>" "cd <repo-in-vm> && dotnet build src/SimpleWall/SimpleWall.csproj"
+ssh wallvm 'cmd /c "cd /d \\Mac\Home\Documents\Coding\simple-wall && dotnet build src\SimpleWall\SimpleWall.csproj"'
 ```
-Expected: `Build succeeded`.
-
-**If it fails** with an error about `UseWindowsForms` not being supported for `net48`: remove that property and add instead:
-```xml
-<ItemGroup>
-  <Reference Include="System.Windows.Forms" />
-  <Reference Include="System.Drawing" />
-</ItemGroup>
-```
-Rebuild. This is the documented fallback — take it and move on, don't debug the SDK.
+Expected: `La génération a réussi` (French VM) — 0 errors. This combination was probed on 2026-07-16 and works; a failure here means the csproj differs from the probe, not that the toolchain is broken.
 
 **Step 5: Create the test project**
 
@@ -146,9 +133,10 @@ Rebuild. This is the documented fallback — take it and move on, don't debug th
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.*" />
-    <PackageReference Include="xunit" Version="2.*" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="2.*" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/SimpleWall/SimpleWall.csproj" />
@@ -179,9 +167,9 @@ This asserts nothing about the product. Its job is to prove `dotnet test` works 
 **Step 7: Run the tests**
 
 ```bash
-prlctl exec "<VM-NAME>" "cd <repo-in-vm> && dotnet test"
+ssh wallvm 'cmd /c "cd /d \\Mac\Home\Documents\Coding\simple-wall && dotnet test"'
 ```
-Expected: `Passed! - Failed: 0, Passed: 1`.
+Expected: `Réussi! - échec : 0, réussite : 1`. (The VM is French — "échec" is failures, "réussite" is passes. Read them the right way round.)
 
 **Step 8: Commit**
 
@@ -285,7 +273,7 @@ private static void Main(string[] args)
 **Step 4: Build and smoke-test in the VM**
 
 ```bash
-prlctl exec "<VM-NAME>" "cd <repo-in-vm> && dotnet build src/SimpleWall/SimpleWall.csproj"
+ssh wallvm 'cmd /c "cd /d \\Mac\Home\Documents\Coding\simple-wall && dotnet build src\SimpleWall\SimpleWall.csproj"'
 ```
 Run it in the VM against any mp4. Expect video. Expect it to be slow — VLC x64 is emulating on ARM. **Do not tune performance here; VM performance is meaningless.** This step only proves the code runs before you carry it to the wall.
 
@@ -388,7 +376,7 @@ That third test is the one that matters. "Lose the layout, not the evening" is a
 **Step 2: Run the tests, verify they fail**
 
 ```bash
-prlctl exec "<VM-NAME>" "cd <repo-in-vm> && dotnet test"
+ssh wallvm 'cmd /c "cd /d \\Mac\Home\Documents\Coding\simple-wall && dotnet test"'
 ```
 Expected: compile failure — `ConfigStore` does not exist. That's a legitimate red.
 
@@ -1505,7 +1493,7 @@ The only task that proves the product works. Everything before it is preparation
 **Step 1: Release build**
 
 ```bash
-prlctl exec "<VM-NAME>" "cd <repo-in-vm> && dotnet build -c Release src/SimpleWall/SimpleWall.csproj"
+ssh wallvm 'cmd /c "cd /d \\Mac\Home\Documents\Coding\simple-wall && dotnet build -c Release src\SimpleWall\SimpleWall.csproj"'
 ```
 Confirm the output folder contains the EXE plus the VLC natives.
 
