@@ -9,6 +9,10 @@ Play looping mp4 clips on a strip LED wall, triggered by mouse, by a Stream Deck
 
 The wall is driven as a region of a normal Windows monitor: the monitor reports 1920x1080, but the LED only reproduces a strip across the top, and the clips are sized to that strip (e.g. 1964x256). Neither the monitor resolution nor the clip dimensions are hardcoded — the output is positioned and sized freely.
 
+**Verified on the real machine 2026-07-16** (this corrects the original brief): the LED is an **extended second display at X=1920**, not a mirror of the primary's top strip. Working geometry is **X=1920, Y=0, W=1964, H=256** — width 1964, *wider than the 1920 panel*, deliberately: the clip is 1964 wide, so at W=1920 VLC downscales it and the wall looks soft, while at 1964 the overhang is cropped and the visible area is pixel-for-pixel 1:1 and visibly sharper.
+
+Two consequences for the code: the output defaults onto the non-primary display's bounds rather than 0,0, and output width is **never clamped** to the screen — wider-than-screen is a legitimate setting. (Also: the LED enumerates as `DISPLAY1` while the primary is `DISPLAY2`. Device names are not an ordering; read `Bounds` and `Primary`.)
+
 ## Constraints
 
 - Runs on Windows 7 Home Premium SP1 64-bit and every later Windows.
@@ -71,7 +75,13 @@ Boxes hold absolute paths, not copies of the media.
 
 Single-click plays that clip immediately, looping. The playing box gets a bright border. Clicking the already-playing box does nothing — no restart, no stop — so a stray double-click can't glitch the wall. Stopping is a separate deliberate action.
 
-Clips load on trigger rather than being preloaded. A local mp4 opens in well under 100ms, so switching feels instant, but there is a brief black frame between clips. This is the accepted cost of cutting layers and crossfades. If it proves visible on the wall, the fix is the two-layer mixer deliberately scoped out (see Out of scope).
+**Two layers, hard cut** — decided by measurement on the real wall (2026-07-16), reversing this design's original guess.
+
+The first draft loaded each clip on trigger and accepted "a brief black frame". Measured on the actual LED panel, that black is **~290ms** (`GAP A->B: 112 ms`, `FIRST PICTURE: 286 ms`) — plainly visible, and read as "half a second" by the operator, because black on a bright wall feels longer than it measures. Not acceptable on a live wall.
+
+That time is inherent to opening the file and bringing up a decoder; VLC won't do it much faster. But the wall only goes black because the outgoing clip is torn down the instant the new one is triggered. So the output window holds **two stacked layers**. On trigger, the new clip loads into the hidden layer, and the swap happens only once it actually has a picture — the outgoing clip stays on the wall until then. The wall never goes black.
+
+The cost is ~290ms between trigger and change, which is a far better trade than a dropout. It is still **one clip at a time**: no mixer, no crossfade slider, no extra controls, and no change to the OSC contract. Layers are an implementation detail here, not a feature.
 
 ## Transport and image adjustment
 
@@ -167,7 +177,7 @@ Fail visibly before showtime, never mid-show.
 
 Deliberately cut, listed so the reasoning survives:
 
-- **Layers / crossfades / mixer** — the reason clip switching shows a black frame. First thing to add if that flash proves visible.
+- **Crossfades / a mixer** — the wall now hard-cuts with no black (see above), which is what was actually needed. Blending two clips is a different feature; VLC doesn't do it natively, and nobody asked for it.
 - **Saturation, gamma, hue** — free from VLC's filter, still cut.
 - **Audio** — it's an LED wall.
 - **Clip trimming, speed, playback range, effects, BPM sync** — Resolume's actual feature set. Not this.
