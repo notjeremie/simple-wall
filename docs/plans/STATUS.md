@@ -1,7 +1,7 @@
 # simple-wall — where things stand
 
 **Last updated:** 2026-07-17, session 2
-**Tests:** 103 passing, 0 failing (~27s — the libvlc contract and thumbnail tests drive real playback)
+**Tests:** 109 passing, 0 failing (~28s — the libvlc contract and thumbnail tests drive real playback)
 **Branch:** `master` (user explicitly consented to committing straight to master)
 
 ## Read these first, in this order
@@ -122,7 +122,8 @@ Neither is needed now — rendering never touches a desktop.
 
 Things Task 9 could not settle away from the hardware. Each has a named symptom — don't just "check it works".
 
-1. **Does the back layer's vout come up while it is occluded?** This is the load-bearing assumption of the whole two-layer design and it is unproven. Z-order *is* enough to hide the back layer (measured: both VideoViews have `WS_CLIPSIBLINGS`), but whether libvlc's D3D9 vout *initialises* against a window whose visible region is empty is reasoning, not measurement — and `--vout=dummy` never increments `VoutCount`, so no test touches it. **Symptom if wrong: every clip change waits 5s, logs "produced no picture", and the wall never changes.** That would be fatal to the design, so check it first.
+1. **Does the back layer's vout come up while it is occluded?** Still unproven — z-order *is* enough to hide the layer (measured: both VideoViews have `WS_CLIPSIBLINGS`), but whether libvlc builds a D3D9 vout against a window with an empty visible region is unprovable off the real hardware (`--vout=dummy` never increments `VoutCount`, and the VM has no GPU). **This is no longer architecture-threatening, and no longer worth a special trip.** `SwapPolicy` treats "playing but no picture yet" as *swap anyway after 1s*, not as failure: if the vout was merely waiting to be seen, it starts the moment the layer comes to the front, and the worst case is the ~290ms of visible black we'd have had with no layers at all. These are looped background clips — nothing is frame-critical and starting mid-loop costs nothing (user, 2026-07-17). **What to watch for:** if the log says "swapping anyway" on every clip change, the fast path never fires and the cut is visible — that's this assumption being wrong, and it's a tuning problem, not a redesign. If it never says that, the invisible cut is working.
+
 2. **Expect up to one frame (~40ms) of black at the cut**, not zero: the incoming layer's region was clipped until `BringToFront`, so its next Present is the first one that lands. Still far better than 290ms. Look for it rather than assume.
 3. **Measure `:avcodec-hw=dxva2`.** It is in on the theory that naming DXVA2 up front skips the failed D3D11 attempt the spike measured. If it misbehaves, deleting that one line in `VlcOptions.Media()` restores the proven default path. A typo there would be silent (see above) — confirm from the VLC log that it took.
 4. **The 22-day `EndReached` restart is not seamless** — nothing holds the wall while it reloads. Expect ~290ms of black once every ~22 days.

@@ -35,13 +35,14 @@ namespace SimpleWall.Engine
     public class VlcWallEngine : IWallEngine, IDisposable
     {
         /// <summary>
-        /// How long to wait for the incoming layer to produce a picture before giving up on
-        /// it. Measured first-picture on the real machine was ~286ms; this is deliberately
-        /// far looser, because the cost of being wrong is asymmetric -- abandoning a clip
-        /// that was merely slow blanks nothing (the outgoing clip keeps the wall), but the
-        /// operator's button appears dead.
+        /// How long to wait for the incoming layer to report a picture before swapping to it
+        /// anyway. Measured first-picture on the real machine was ~286ms, so this is already
+        /// generous; a dead second between press and change is a long time to stand there.
+        ///
+        /// Waiting is only ever an OPTIMISATION -- see <see cref="OnFirstPictureTick"/> for why
+        /// running out of patience is not a failure.
         /// </summary>
-        private static readonly TimeSpan FirstPictureTimeout = TimeSpan.FromSeconds(5);
+        private static readonly TimeSpan FirstPictureTimeout = TimeSpan.FromSeconds(1);
 
         /// <summary>
         /// A WinForms timer floors at ~15.6ms regardless of what is asked for, so this is
@@ -66,6 +67,15 @@ namespace SimpleWall.Engine
         private int? _pendingSlot;
         private Media _frontMedia;
         private Media _pendingMedia;
+
+        /// <summary>
+        /// Set from libvlc's thread when the pending clip errors; read by the poll on the UI
+        /// thread. It is the ONLY thing separating "unplayable, abandon it" from "playing fine
+        /// but hasn't reported a picture yet, swap anyway" -- without it, swapping on timeout
+        /// would blank the wall for a corrupt file.
+        /// </summary>
+        private volatile bool _pendingFailed;
+
         private bool _disposed;
 
         public VlcWallEngine(ClipLibrary library, WallConfig config, Action<string> log = null)
@@ -84,6 +94,11 @@ namespace SimpleWall.Engine
                 _playerB = new MediaPlayer(_libVlc);
                 _playerA.EndReached += (s, e) => OnEndReached(true);
                 _playerB.EndReached += (s, e) => OnEndReached(false);
+
+                // Nothing but a flag: this runs on libvlc's thread, and re-entering libvlc from
+                // inside its own callback is a documented deadlock. The poll reads it.
+                _playerA.EncounteredError += (s, e) => OnEncounteredError(true);
+                _playerB.EncounteredError += (s, e) => OnEncounteredError(false);
 
                 _outputWindow = new OutputWindow(_playerA, _playerB);
                 ApplyGeometry();
@@ -205,6 +220,10 @@ namespace SimpleWall.Engine
             _pendingSlot = slot;
             _pendingMedia = media;
 
+            // Cleared before Play, never after: a stale true from the previous clip would
+            // abandon this one on sight, and every clip after it.
+            _pendingFailed = false;
+
             // Shown BEFORE Play, never after: libvlc builds its vout against whatever window
             // it is handed at that moment. A window that is invisible at Play and shown
             // afterwards is untested territory on this GPU, and the failure mode is a black
@@ -223,8 +242,27 @@ namespace SimpleWall.Engine
         }
 
         /// <summary>
-        /// The swap. Polls until the incoming layer reports a video output, which is the
-        /// closest available proxy for "there is a frame on the wall", then flips z-order.
+        /// The swap. Polls until the incoming layer reports a video output -- the closest
+        /// available proxy for "there is a frame on the wall" -- then flips z-order.
+        ///
+        /// Running out of patience is NOT a failure, and this distinction is the whole design:
+        ///
+        ///   * A clip that reported a picture swaps invisibly. That is the fast path and the
+        ///     reason the two layers exist.
+        ///   * A clip that is playing fine but hasn't reported a vout swaps ANYWAY. It may
+        ///     simply be that nobody can see it: whether libvlc builds a Direct3D9 vout against
+        ///     an occluded window is unproven (--vout=dummy never increments VoutCount, so no
+        ///     test can reach it, and the build VM has no GPU). If that is what's happening, the
+        ///     vout starts the instant the layer is brought to the front, and the worst case is
+        ///     the ~290ms of black we would have had with no layers at all. These are looped
+        ///     background clips -- nothing is frame-critical, and starting mid-loop costs
+        ///     nothing. Degrading to the old visible cut beats a wall that stops changing.
+        ///   * A clip libvlc has actually FAILED on is abandoned, because swapping to it would
+        ///     blank the wall for real. That is what _pendingFailed is for.
+        ///
+        /// This used to abandon on timeout, which assumed no-vout meant a broken clip. It made
+        /// an unproven assumption load-bearing: if occluded vouts don't start, every clip change
+        /// would have waited 5s and then done nothing, leaving every button dead.
         /// </summary>
         private void OnFirstPictureTick(object sender, EventArgs e)
         {
@@ -234,19 +272,28 @@ namespace SimpleWall.Engine
                 return;
             }
 
-            if (BackPlayer.VoutCount > 0)
+            switch (SwapPolicy.Decide(_pendingFailed, BackPlayer.VoutCount, _loadStopwatch.Elapsed, FirstPictureTimeout))
             {
-                CompleteSwap();
-                return;
-            }
+                case SwapAction.KeepWaiting:
+                    return;
 
-            if (_loadStopwatch.Elapsed > FirstPictureTimeout)
-            {
-                var slot = _pendingSlot.Value;
-                var path = _library.BySlot(slot)?.Path;
-                _log($"Slot {slot} produced no picture after {FirstPictureTimeout.TotalSeconds}s -- abandoning, wall unchanged.");
-                CancelPending();
-                RaiseUnavailable(slot, path, "the clip produced no picture");
+                case SwapAction.SwapNow:
+                    CompleteSwap();
+                    return;
+
+                case SwapAction.SwapAnyway:
+                    _log($"Slot {_pendingSlot} reported no picture within {FirstPictureTimeout.TotalMilliseconds}ms " +
+                         "-- swapping anyway; expect a brief black frame.");
+                    CompleteSwap();
+                    return;
+
+                case SwapAction.Abandon:
+                    var slot = _pendingSlot.Value;
+                    var path = _library.BySlot(slot)?.Path;
+                    _log($"Slot {slot}: libvlc could not play it -- abandoning, wall unchanged.");
+                    CancelPending();
+                    RaiseUnavailable(slot, path, "the clip could not be played");
+                    return;
             }
         }
 
@@ -268,6 +315,7 @@ namespace SimpleWall.Engine
 
             CurrentSlot = _pendingSlot;
             _pendingSlot = null;
+            _pendingFailed = false;
 
             _log($"Swapped to slot {CurrentSlot} after {_loadStopwatch.ElapsedMilliseconds} ms");
             RaiseStateChanged();
@@ -283,6 +331,7 @@ namespace SimpleWall.Engine
             _pendingMedia?.Dispose();
             _pendingMedia = null;
             _pendingSlot = null;
+            _pendingFailed = false;
         }
 
         private void SetPaused(bool paused)
@@ -356,6 +405,18 @@ namespace SimpleWall.Engine
             player.SetAdjustInt(VideoAdjustOption.Enable, 1);
             player.SetAdjustFloat(VideoAdjustOption.Brightness, ClampAdjust(_config.Brightness));
             player.SetAdjustFloat(VideoAdjustOption.Contrast, ClampAdjust(_config.Contrast));
+        }
+
+        /// <summary>
+        /// The pending clip failed to play. Only the BACK player matters here: the front one
+        /// erroring is a clip already on the wall, which Task 15 will have to look at, but there
+        /// is nothing useful to do about it from here -- stopping it would blank the wall to no
+        /// purpose.
+        /// </summary>
+        private void OnEncounteredError(bool isA)
+        {
+            if (isA == _frontIsA) return;
+            _pendingFailed = true;
         }
 
         /// <summary>
