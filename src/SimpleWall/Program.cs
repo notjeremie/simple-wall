@@ -7,6 +7,7 @@ using SimpleWall.Engine;
 using SimpleWall.Logging;
 using SimpleWall.Model;
 using SimpleWall.Osc;
+using SimpleWall.Scheduling;
 using SimpleWall.UI;
 
 namespace SimpleWall
@@ -38,6 +39,7 @@ namespace SimpleWall
             var store = new ConfigStore(Path.Combine(LogPaths.ActiveLogDirectory, "config.json"));
             var config = store.Load();
             var library = new ClipLibrary(config.Clips);
+            var scheduler = new Scheduler(config.Tasks) { Enabled = config.SchedulerEnabled };
 
             using (var thumbnails = new ThumbnailCache())
             using (var engine = CreateEngine(library, config))
@@ -46,9 +48,15 @@ namespace SimpleWall
 
                 // Saving from the UI on slider release, rather than per scroll tick: a drag
                 // fires a hundred times and each Save is an atomic file write.
-                Action save = () => store.Save(config);
+                Action save = () =>
+                {
+                    // The scheduler's master switch lives on the Scheduler at runtime; the config
+                    // is what survives a restart, so it has to be told before every save.
+                    config.SchedulerEnabled = scheduler.Enabled;
+                    store.Save(config);
+                };
 
-                using (var form = new MainForm(engine, library, config, thumbnails, save, Log))
+                using (var form = new MainForm(engine, library, scheduler, config, thumbnails, save, Log))
                 using (var listener = new OscListener(config.OscPort, form, Log))
                 using (var replies = new OscReplySender(engine, config, Log))
                 {

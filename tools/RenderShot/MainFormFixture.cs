@@ -3,6 +3,7 @@ using System.IO;
 using System.Windows.Forms;
 using SimpleWall.Engine;
 using SimpleWall.Model;
+using SimpleWall.Scheduling;
 using SimpleWall.UI;
 
 namespace RenderShot
@@ -34,7 +35,7 @@ namespace RenderShot
             var engine = new StubEngine { CurrentSlot = 2, IsPlaying = true };
             var thumbnails = new ThumbnailCache(Path.Combine(Path.GetTempPath(), "sw-rendershot-thumbs"));
 
-            return new MainForm(engine, library, config, thumbnails);
+            return new MainForm(engine, library, new Scheduler(config.Tasks), config, thumbnails);
         }
 
         /// <summary>

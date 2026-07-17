@@ -242,5 +242,48 @@ namespace SimpleWall.Tests
                 if (File.Exists(path + ".tmp")) File.Delete(path + ".tmp");
             }
         }
+
+        /// <summary>
+        /// Spent is meaningless for a recurring task -- ScheduledTask.Spent says so in as many
+        /// words -- but the scheduler used to honour it for any task. A weekly task carrying a
+        /// stale Spent (converted from a fired one-off, or a hand-edited config) was killed
+        /// forever: still ticked, still black, still a sensible sentence, and never firing.
+        /// </summary>
+        [Fact]
+        public void ARecurringTaskIsNotKilledByAStaleSpentFlag()
+        {
+            var task = new ScheduledTask
+            {
+                Days = new List<DayOfWeek> { DayOfWeek.Friday },
+                Time = new TimeSpan(13, 0, 0),
+                Command = WallCommand.Simple(CommandKind.Stop),
+                Spent = true // left over from a life as a one-off
+            };
+            var scheduler = new Scheduler(new List<ScheduledTask> { task });
+
+            var friday = new DateTime(2026, 7, 17); // a Friday
+            var due = scheduler.DueBetween(friday.AddHours(12).AddMinutes(59), friday.AddHours(13).AddMinutes(1));
+
+            Assert.Single(due);
+        }
+
+        [Fact]
+        public void ASpentOneOffStillNeverFiresAgain()
+        {
+            var task = new ScheduledTask
+            {
+                OneOffDate = new DateTime(2026, 7, 17),
+                Time = new TimeSpan(13, 0, 0),
+                Command = WallCommand.Simple(CommandKind.Stop),
+                Spent = true
+            };
+            var scheduler = new Scheduler(new List<ScheduledTask> { task });
+
+            var day = new DateTime(2026, 7, 17);
+            var due = scheduler.DueBetween(day.AddHours(12).AddMinutes(59), day.AddHours(13).AddMinutes(1));
+
+            Assert.Empty(due);
+        }
+
     }
 }

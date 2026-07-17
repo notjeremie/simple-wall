@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
 using SimpleWall.Engine;
 
 namespace SimpleWall.Scheduling
@@ -47,6 +49,60 @@ namespace SimpleWall.Scheduling
         {
             if (OneOffDate.HasValue) return OneOffDate.Value.Date == date.Date;
             return Days.Contains(date.DayOfWeek);
+        }
+
+        /// <summary>
+        /// The task as a sentence: "Every Sun at 13:00 -> play clip 7 (intro.mp4)".
+        ///
+        /// A schedule is read far more often than it is written, usually by someone asking "why
+        /// did that come up on the wall?" or "will this fire on Sunday?" -- so the list has to
+        /// answer in a sentence, not in columns the reader has to decode.
+        ///
+        /// <paramref name="clipName"/> is a lookup rather than a ClipLibrary so this class stays
+        /// free of the clip roster (and stays a plain unit test). It returns null for a slot with
+        /// no clip, which is a real state worth showing rather than hiding.
+        /// </summary>
+        public string Describe(Func<int, string> clipName = null)
+        {
+            return $"{DescribeWhen()} at {Time:hh\\:mm} -> {DescribeCommand(clipName)}";
+        }
+
+        private string DescribeWhen()
+        {
+            if (OneOffDate.HasValue)
+                return "On " + OneOffDate.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+            // A weekly task with no days ticked can never fire. Saying so is the whole point of a
+            // description -- the alternative is an entry that looks scheduled and silently isn't.
+            if (Days == null || Days.Count == 0) return "Never (no days chosen)";
+
+            if (Days.Distinct().Count() >= 7) return "Every day";
+
+            // DayOfWeek starts at Sunday, which is also where the week starts here.
+            var names = CultureInfo.InvariantCulture.DateTimeFormat.AbbreviatedDayNames;
+            var days = Days.Distinct().OrderBy(d => (int)d).Select(d => names[(int)d]);
+            return (Days.Distinct().Count() == 1 ? "Every " : "") + string.Join(", ", days);
+        }
+
+        private string DescribeCommand(Func<int, string> clipName)
+        {
+            if (Command == null) return "(no command)";
+
+            switch (Command.Kind)
+            {
+                case CommandKind.PlayClip:
+                    var name = clipName?.Invoke(Command.Slot);
+                    return $"play clip {Command.Slot} ({name ?? "no clip in this slot"})";
+
+                case CommandKind.Brightness:
+                    return "brightness " + Command.Value.ToString("0.00", CultureInfo.InvariantCulture);
+
+                case CommandKind.Contrast:
+                    return "contrast " + Command.Value.ToString("0.00", CultureInfo.InvariantCulture);
+
+                default:
+                    return Command.Kind.ToString().ToLowerInvariant();
+            }
         }
     }
 }

@@ -33,7 +33,26 @@ namespace SimpleWall.Scheduling
         public Scheduler(List<ScheduledTask> tasks) { _tasks = tasks; }
 
         public bool Enabled { get; set; } = true;
+
+        /// <summary>
+        /// Live view of the schedule. These are the same objects the list holds, and the list is
+        /// the SAME instance a WallConfig owns, so edits here persist on its next Save.
+        /// </summary>
         public IReadOnlyList<ScheduledTask> Tasks => _tasks;
+
+        /// <summary>Adds a task. Null is ignored rather than stored to blow up at 13:00 on a Sunday.</summary>
+        public void Add(ScheduledTask task)
+        {
+            if (task == null) return;
+            _tasks.Add(task);
+        }
+
+        /// <summary>Removes by Id, so a caller holding a stale copy still removes the right one.</summary>
+        public void Remove(ScheduledTask task)
+        {
+            if (task == null) return;
+            _tasks.RemoveAll(t => t.Id == task.Id);
+        }
 
         /// <summary>
         /// Tasks whose scheduled moment falls in (previousTick, now]. Half-open at the
@@ -58,7 +77,15 @@ namespace SimpleWall.Scheduling
 
             foreach (var task in _tasks)
             {
-                if (!task.Enabled || task.Spent) continue;
+                // Spent only means anything for a one-off -- see ScheduledTask.Spent, which says so
+                // in as many words. Honouring it on a recurring task kills that task FOREVER, and
+                // it is reachable: the scheduler sets Spent on a one-off, the operator later edits
+                // it into a weekly, and the stale flag rides along. The row then looks perfectly
+                // normal -- ticked, not red, a sensible sentence -- and never fires again, with
+                // nothing logged. That is precisely the silent-lie failure this whole feature
+                // exists to prevent.
+                if (!task.Enabled) continue;
+                if (task.Spent && task.OneOffDate.HasValue) continue;
 
                 for (var date = previousTick.Date; date <= now.Date; date = date.AddDays(1))
                 {

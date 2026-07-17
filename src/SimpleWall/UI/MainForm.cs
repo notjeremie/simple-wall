@@ -7,6 +7,7 @@ using System.Linq;
 using System.Windows.Forms;
 using SimpleWall.Engine;
 using SimpleWall.Model;
+using SimpleWall.Scheduling;
 
 namespace SimpleWall.UI
 {
@@ -33,6 +34,7 @@ namespace SimpleWall.UI
     {
         private readonly IWallEngine _engine;
         private readonly ClipLibrary _library;
+        private readonly Scheduler _scheduler;
         private readonly WallConfig _config;
         private readonly ThumbnailCache _thumbnails;
         private readonly Action _saveConfig;
@@ -53,17 +55,28 @@ namespace SimpleWall.UI
         private Label _brightnessValue;
         private Label _contrastValue;
         private readonly Timer _saveDebounce = new Timer { Interval = 800 };
+        private readonly Timer _tick = new Timer { Interval = 1000 };
+        private SchedulerTab _schedulerTab;
+
+        /// <summary>
+        /// THE no-catch-up rule, and it is this one line: it starts at "now", so a task whose
+        /// moment fell before the app started is simply never inside a window the scheduler is
+        /// asked about. Boot at 13:20 and the 13:00 task does not run -- nothing unexpected ever
+        /// appears on the wall while nobody is in the room to see it was wrong.
+        /// </summary>
+        private DateTime _previousTick = DateTime.Now;
 
         private ClipBox _dragSource;
         private ClipBox _menuTarget;
         private Point _dragOrigin;
         private string _notice;
 
-        public MainForm(IWallEngine engine, ClipLibrary library, WallConfig config, ThumbnailCache thumbnails,
-            Action saveConfig = null, Action<string> log = null)
+        public MainForm(IWallEngine engine, ClipLibrary library, Scheduler scheduler, WallConfig config,
+            ThumbnailCache thumbnails, Action saveConfig = null, Action<string> log = null)
         {
             _engine = engine ?? throw new ArgumentNullException(nameof(engine));
             _library = library ?? throw new ArgumentNullException(nameof(library));
+            _scheduler = scheduler ?? throw new ArgumentNullException(nameof(scheduler));
             _config = config ?? throw new ArgumentNullException(nameof(config));
             _thumbnails = thumbnails ?? throw new ArgumentNullException(nameof(thumbnails));
             _saveConfig = saveConfig ?? (() => { });
@@ -120,6 +133,8 @@ namespace SimpleWall.UI
             BuildBoxMenu();
 
             _saveDebounce.Tick += (s, e) => { _saveDebounce.Stop(); SaveConfig(); };
+            _tick.Tick += OnSchedulerTick;
+            _tick.Start();
 
             // An explicit three-row table rather than three Dock'd controls. Docking to the same
             // edge resolves by z-order, which is the sort of thing that reads fine and comes out
@@ -136,7 +151,7 @@ namespace SimpleWall.UI
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
-            root.Controls.Add(_grid, 0, 0);
+            root.Controls.Add(BuildTabs(), 0, 0);
             root.Controls.Add(BuildControlBar(), 0, 1);
             root.Controls.Add(_status, 0, 2);
             Controls.Add(root);
@@ -155,6 +170,77 @@ namespace SimpleWall.UI
             if (_library.WasNormalized)
                 SetNotice("config.json had duplicate or out-of-range slots and was repaired -- " +
                           "check the slot numbers against your Stream Deck.");
+        }
+
+        // ----------------------------------------------------------------
+        // Tabs and the scheduler tick
+        // ----------------------------------------------------------------
+
+        private Control BuildTabs()
+        {
+            _schedulerTab = new SchedulerTab(_scheduler, _library, SaveConfig) { Dock = DockStyle.Fill };
+
+            var clips = new TabPage("Clips") { BackColor = Color.FromArgb(24, 24, 28) };
+            clips.Controls.Add(_grid);
+
+            var schedule = new TabPage("Schedule") { BackColor = Color.FromArgb(24, 24, 28) };
+            schedule.Controls.Add(_schedulerTab);
+
+            var tabs = new TabControl { Dock = DockStyle.Fill };
+            tabs.TabPages.Add(clips);
+            tabs.TabPages.Add(schedule);
+
+            // The schedule's sentences name clips, and its red "this cannot fire" marks depend on
+            // the roster, so it must be re-read whenever the operator might have changed it rather
+            // than only when the schedule itself changes.
+            tabs.SelectedIndexChanged += (s, e) =>
+            {
+                if (tabs.SelectedTab == schedule) _schedulerTab.Refresh_();
+            };
+
+            return tabs;
+        }
+
+        /// <summary>
+        /// One second, on the UI thread, same as everything else that touches the engine.
+        ///
+        /// Wrapped, because this runs unattended for months: one throw here would silently stop
+        /// the schedule for the rest of the session and nobody would notice until something didn't
+        /// appear on the wall on a Sunday.
+        /// </summary>
+        private void OnSchedulerTick(object sender, EventArgs e)
+        {
+            var now = DateTime.Now;
+
+            try
+            {
+                if (_scheduler.Enabled)
+                {
+                    foreach (var task in _scheduler.DueBetween(_previousTick, now))
+                    {
+                        _log($"Scheduler fired: {task.Describe(NameOfClip)}");
+                        _engine.Execute(task.Command);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _log("Scheduler tick failed: " + ex);
+            }
+            finally
+            {
+                // Advanced even if a task threw, and even while disabled. Otherwise re-enabling the
+                // schedule would fire everything missed since it was switched off -- the catch-up
+                // this design deliberately does not do.
+                _previousTick = now;
+            }
+        }
+
+        private string NameOfClip(int slot)
+        {
+            var clip = _library.BySlot(slot);
+            if (clip == null) return null;
+            return string.IsNullOrEmpty(clip.Path) ? "(no file)" : System.IO.Path.GetFileName(clip.Path);
         }
 
         // ----------------------------------------------------------------
@@ -734,6 +820,7 @@ namespace SimpleWall.UI
                 _addTile.Dispose();
                 _boxMenu.Dispose();
                 _saveDebounce.Dispose();
+                _tick.Dispose();
             }
             base.Dispose(disposing);
         }

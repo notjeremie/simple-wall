@@ -1,7 +1,7 @@
 # simple-wall — where things stand
 
 **Last updated:** 2026-07-17, session 2
-**Tests:** 134 passing, 0 failing (~28s — libvlc, thumbnail and OSC tests drive real playback and real sockets)
+**Tests:** 152 passing, 0 failing (~28s — libvlc, thumbnail and OSC tests drive real playback and real sockets)
 **Branch:** `master` (user explicitly consented to committing straight to master)
 
 ## Read these first, in this order
@@ -27,14 +27,15 @@
 | 10 | Clip grid UI | ✅ done — **the spike is gone; the app now runs the real engine** |
 | 11 | Transport + image adjustment UI | ✅ done |
 | 12 | OSC listener + reply | ✅ done — **proven end-to-end from the Mac over real UDP** |
-| 13 | Scheduler UI + one-second tick | pending |
+| 13 | Scheduler UI + one-second tick | ✅ done — **watched a real task fire on the VM** |
 | 14 | Settings, autostart, logging | pending |
 | 15 | Packaging + Win7 acceptance | pending |
 
-**Next action: Task 13 (scheduler UI + one-second tick).** `Scheduler`'s due-calculation (Task 6) is done and tested; this is the UI over it plus the tick that drives it. Two standing rules for any UI task:
+**Next action: Task 14 (settings, autostart, logging).** It carries three debts already logged here:
 
-1. **Build the control tree in the constructor, never in `Load`** — anything added in `Load` is invisible to RenderShot and it cannot tell.
-2. **Render it and look at the PNG before calling it done.** It has caught something every single time.
+1. **A single-instance mutex** — autostart racing a manual launch is a live open thread below.
+2. **A debounced config save** — the engine deliberately never saves (an OSC fader sweep is ~100 packets/sec and every Save is an atomic write). The UI debounces its own slider saves already; an OSC-driven change still only reaches disk at exit.
+3. **The OSC firewall rule** may belong here rather than in packaging — see item 0 of the wall checklist.
 
 Task 7 notes: the trap was real and the plan's own sample code fell into it — `IsButtonRelease` ran before the address switch, swallowing `/brightness 0`. The fix is structural: the release guard now lives in `Trigger()`, which wraps only the valueless addresses; `/brightness` and `/contrast` never see it, because `0` is data there. Both structures were run against the tests to prove the guard bites.
 
@@ -80,6 +81,7 @@ Every task: **implementer → spec-compliance review → code-quality review**, 
 - I specified VLC **2.x** logging options (`--file-logging`) that make `libvlc_new` return NULL. The app would have opened a window and done nothing, forever, on arrival at the wall. A reviewer proved it with a harness.
 - I designed a config save that couldn't survive the power cut it was written for: `WriteAllText` doesn't flush, so the likely artifact is a **zero-length** file — precisely the input that skipped quarantine and then got overwritten.
 - I wrote a scheduler that skips any task whose moment falls on the other side of a midnight tick. An implementer proved it by running my own code against a test it wrote.
+- Task 13: `Scheduler.DueBetween` honoured `Spent` for **every** task — while `ScheduledTask.Spent`'s own documentation says it is "meaningless for recurring tasks". A reviewer traced the path: the scheduler sets `Spent` on a one-off, the operator later edits it into a weekly, and the stale flag rides along. The row then looks perfectly normal — ticked, not red, a sensible sentence — and **never fires again, forever, with nothing logged**. That is the exact silent lie the whole tab exists to prevent. Fixed in both places: the scheduler now honours `Spent` only for one-offs, and any save from the editor clears it.
 - Task 12: `OscReplySender` used `UdpClient.Send(bytes, len, HOSTNAME, port)`, which **resolves DNS on every call** — from `StateChanged`, on the UI thread. A reviewer measured a bare hostname like `streamdeck-pc` (i.e. exactly what someone types into `OscReplyHost`) at **~10 seconds per call**, uncached, every time. At ~100 fader packets a second the UI thread never catches up: the wall wedges permanently. My test gave false comfort — it used `no-such-host.invalid`, the one unreachable name that's fast, and asserted only "does not throw", which was never the risk. The rewritten test measures duration and fails at **25,506ms** against the old code. Resolution now happens once, off the UI thread.
 - Task 12: I marshalled with `if (InvokeRequired) BeginInvoke else call()`. **`InvokeRequired` returns false when the handle doesn't exist**, not just when you're on the right thread — and `Raise` only ever runs on the receive thread, so that `else` was never "we're on the UI thread", it was "there's no window yet", twice per run (before `Application.Run`, and after the form closes). It would have called `Execute` — native libvlc — on the receive thread. `MainForm.BeginInvokeSafely` already had the right pattern and even predicted this in a comment; I didn't reuse it.
 - Task 11: I saved brightness on mouse-release, so the **mouse wheel** — which raises `Scroll` but never `MouseUp` — changed the wall and never persisted it. Worse, `WM_MOUSEWHEEL` goes to the *focused* control, so once an operator touched a slider, scrolling the clip grid would drift wall brightness 0.03 a notch and silently revert on restart. A reviewer measured it. The wheel is now ignored outright (`WallTrackBar`), and saving is debounced so every input route is covered.

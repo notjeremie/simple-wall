@@ -2,6 +2,7 @@ using System;
 using System.Windows.Forms;
 using SimpleWall.Engine;
 using SimpleWall.Model;
+using SimpleWall.Scheduling;
 using SimpleWall.UI;
 using System.IO;
 
@@ -23,7 +24,7 @@ namespace RenderShot
             var engine = new StubEngine();
             var thumbnails = new ThumbnailCache(Path.Combine(Path.GetTempPath(), "sw-rendershot-thumbs"));
 
-            return new MainForm(engine, library, config, thumbnails);
+            return new MainForm(engine, library, new Scheduler(config.Tasks), config, thumbnails);
         }
 
         private class StubEngine : IWallEngine
