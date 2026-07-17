@@ -76,13 +76,30 @@ namespace SimpleWall.Scheduling
             // description -- the alternative is an entry that looks scheduled and silently isn't.
             if (Days == null || Days.Count == 0) return "Never (no days chosen)";
 
-            if (Days.Distinct().Count() >= 7) return "Every day";
-
             // DayOfWeek starts at Sunday, which is also where the week starts here.
-            var names = CultureInfo.InvariantCulture.DateTimeFormat.AbbreviatedDayNames;
-            var days = Days.Distinct().OrderBy(d => (int)d).Select(d => names[(int)d]);
-            return (Days.Distinct().Count() == 1 ? "Every " : "") + string.Join(", ", days);
+            var days = Days.Distinct().OrderBy(d => (int)d).ToList();
+
+            // Count only real days: a config holding [0,1,2,3,4,5,9] has seven distinct values and
+            // is not "every day".
+            if (days.Count(IsRealDay) == 7) return "Every day";
+
+            return (days.Count == 1 ? "Every " : "") + string.Join(", ", days.Select(NameOf));
         }
+
+        private static bool IsRealDay(DayOfWeek day) => (int)day >= 0 && (int)day <= 6;
+
+        /// <summary>
+        /// Never indexes the names array blind. Json.NET casts a JSON integer to an enum WITHOUT
+        /// range-checking it, so a hand-edited "Days": [9] produces (DayOfWeek)9 and an
+        /// IndexOutOfRangeException -- thrown from the MainForm constructor, i.e. before
+        /// Application.Run exists to catch it. Reproduced: the app died with no window and no
+        /// dialog, which is the one outcome an autostarted wall PC must never have. ConfigStore
+        /// deliberately never refuses to start; this must not undo that.
+        /// </summary>
+        private static string NameOf(DayOfWeek day) =>
+            IsRealDay(day)
+                ? CultureInfo.InvariantCulture.DateTimeFormat.AbbreviatedDayNames[(int)day]
+                : $"?{(int)day}";
 
         private string DescribeCommand(Func<int, string> clipName)
         {

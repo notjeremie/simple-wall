@@ -214,14 +214,17 @@ namespace SimpleWall.UI
 
             try
             {
-                if (_scheduler.Enabled)
+                if (TickGuard.ShouldResync(_previousTick, now))
                 {
-                    foreach (var task in _scheduler.DueBetween(_previousTick, now))
-                    {
-                        _log($"Scheduler fired: {task.Describe(NameOfClip)}");
-                        _engine.Execute(task.Command);
-                    }
+                    _log($"Clock moved: {_previousTick:HH:mm:ss} -> {now:HH:mm:ss}. " +
+                         "Skipping that window rather than firing everything in it.");
+                    return; // finally still resyncs _previousTick
                 }
+
+                if (!_scheduler.Enabled) return;
+
+                foreach (var task in _scheduler.DueBetween(_previousTick, now))
+                    Fire(task);
             }
             catch (Exception ex)
             {
@@ -229,10 +232,39 @@ namespace SimpleWall.UI
             }
             finally
             {
-                // Advanced even if a task threw, and even while disabled. Otherwise re-enabling the
-                // schedule would fire everything missed since it was switched off -- the catch-up
-                // this design deliberately does not do.
+                // Advanced whatever happened -- a throw, a clock jump, or the schedule being off.
+                // Otherwise re-enabling would fire everything missed while it was switched off,
+                // which is the catch-up this design deliberately does not do.
                 _previousTick = now;
+            }
+        }
+
+        /// <summary>
+        /// One task, isolated.
+        ///
+        /// Per task, not per tick: DueBetween hands back every task due in the window AND has
+        /// already marked each due one-off as Spent. A single throw from Execute -- a clip on a
+        /// share that just dropped is enough -- would abandon every remaining task in that window,
+        /// and no-catch-up means they never run. A one-off would be burned for a fire that never
+        /// happened.
+        ///
+        /// Logged AFTER Execute returns, because "Scheduler fired" printed before the attempt is a
+        /// line that can be a lie.
+        /// </summary>
+        private void Fire(ScheduledTask task)
+        {
+            try
+            {
+                _engine.Execute(task.Command);
+                _log($"Scheduler fired: {task.Describe(NameOfClip)}");
+
+                // A fired one-off must not fire again after a restart, and Spent only says so if it
+                // reaches disk. Rare enough to save on the spot.
+                if (task.OneOffDate.HasValue) SaveConfig();
+            }
+            catch (Exception ex)
+            {
+                _log($"Scheduler task failed ({task.Describe(NameOfClip)}): {ex.Message}");
             }
         }
 

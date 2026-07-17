@@ -78,11 +78,12 @@ namespace SimpleWall
                     Application.Run(form);
                 }
 
-                // Saved once, on the way out. The engine deliberately does not save on every
-                // brightness change -- an OSC fader sweep is ~100 packets a second and
-                // ConfigStore.Save is an atomic file write. Task 14 owes a debounced save, so
-                // that a power cut doesn't lose the session's settings.
-                try { store.Save(config); }
+                // Saved once, on the way out, and through `save` rather than store.Save directly:
+                // `save` is what copies scheduler.Enabled into the config, and this is the LAST
+                // write, so bypassing it would persist stale state the moment anything other than
+                // the master checkbox can toggle the schedule (an OSC address, say -- OSC already
+                // reaches Execute).
+                try { save(); }
                 catch (Exception ex) { Log("Saving config on exit failed: " + ex); }
             }
         }

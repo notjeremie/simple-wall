@@ -45,7 +45,9 @@ namespace SimpleWall.UI
             Task = task ?? new ScheduledTask { Time = DefaultTime, Days = new List<DayOfWeek>() };
 
             Text = task == null ? "New scheduled task" : "Edit scheduled task";
-            ClientSize = new Size(460, 300);
+            // Wide enough for all seven days on one row: at 460 the panel wrapped "Sat" onto a
+            // line of its own, which reads like a mistake next to six neat siblings.
+            ClientSize = new Size(540, 300);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             StartPosition = FormStartPosition.CenterParent;
             MinimizeBox = false;
@@ -55,11 +57,20 @@ namespace SimpleWall.UI
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 2,
-                RowCount = 6,
+                RowCount = 7,
                 Padding = new Padding(10)
             };
             root.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+
+            // Explicit row styles, and a filler row that soaks up the slack. Without them the LAST
+            // row absorbs every spare pixel of the panel, and a label anchored Left centres itself
+            // in it -- so when the clip row collapses for a brightness task, "Value:" floated 54px
+            // BELOW its own spinner, next to nothing at all. Nothing "collapsed", so the layout
+            // dump and the exit code were both happy; it was simply wrong, and only a render of
+            // that particular branch shows it.
+            for (var i = 0; i < 6; i++) root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
 
             // --- when
             _time = new DateTimePicker
@@ -154,7 +165,10 @@ namespace SimpleWall.UI
         }
 
         private static Label NewLabel(string text) =>
-            new Label { Text = text, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 6, 8, 0) };
+            new Label { Text = text, AutoSize = true, Anchor = AnchorStyles.Top | AnchorStyles.Left, Margin = new Padding(0, 6, 8, 0) };
+
+        private DateTime Clamp(DateTime value) =>
+            value < _date.MinDate ? _date.MinDate : value > _date.MaxDate ? _date.MaxDate : value;
 
         private static IEnumerable<DayOfWeek> DaysOfWeek() =>
             ((DayOfWeek[])Enum.GetValues(typeof(DayOfWeek))).OrderBy(d => (int)d);
@@ -168,12 +182,19 @@ namespace SimpleWall.UI
 
         private void LoadFrom(ScheduledTask task)
         {
-            // The picker needs a full date; only the time part is ever read back out.
-            _time.Value = DateTime.Today.Add(task.Time == default(TimeSpan) ? DefaultTime : task.Time);
+            // The picker needs a full date; only the time part is ever read back out. A config can
+            // hold a negative or >24h Time, which would put the picker on the wrong day.
+            var time = task.Time;
+            if (time < TimeSpan.Zero || time >= TimeSpan.FromDays(1)) time = DefaultTime;
+            _time.Value = DateTime.Today.Add(time == default(TimeSpan) ? DefaultTime : time);
 
             _weekly.Checked = !task.OneOffDate.HasValue;
             _oneOff.Checked = task.OneOffDate.HasValue;
-            _date.Value = task.OneOffDate ?? DateTime.Today;
+
+            // Clamped: DateTimePicker throws below 1753, and a hand-edited "OneOffDate":
+            // "0001-01-01" would then blow up the moment the operator clicks Edit -- after the row
+            // rendered perfectly normally, which makes it a booby trap.
+            _date.Value = Clamp(task.OneOffDate ?? DateTime.Today);
 
             foreach (var box in _dayBoxes)
                 box.Checked = task.Days != null && task.Days.Contains((DayOfWeek)box.Tag);
@@ -181,9 +202,21 @@ namespace SimpleWall.UI
             _command.SelectedItem = task.Command?.Kind ?? CommandKind.PlayClip;
 
             if (task.Command != null && task.Command.Kind == CommandKind.PlayClip)
+            {
+                // Left UNSELECTED when the task's slot no longer has a clip. Falling back to the
+                // first clip is how a red "play clip 9 (no clip in this slot)" row silently becomes
+                // "play clip 1": the operator double-clicks the red row to see why it is red, the
+                // dialog quietly shows clip 1, and Enter (OK is the AcceptButton) saves it. The row
+                // goes green and looks fixed, and on Friday the wrong clip plays. Apply() already
+                // has the right words for an unselected clip; this just stops pre-empting them.
                 _clip.SelectedItem = _clip.Items.Cast<ClipChoice>()
                     .FirstOrDefault(c => c.Slot == task.Command.Slot);
-            if (_clip.SelectedItem == null && _clip.Items.Count > 0) _clip.SelectedIndex = 0;
+            }
+            else if (_clip.Items.Count > 0)
+            {
+                // A brand-new task, or one whose command takes no clip: a sensible default.
+                _clip.SelectedIndex = 0;
+            }
 
             if (task.Command != null &&
                 (task.Command.Kind == CommandKind.Brightness || task.Command.Kind == CommandKind.Contrast))

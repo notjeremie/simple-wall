@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Windows.Forms;
+using SimpleWall.Engine;
 using SimpleWall.Model;
 using SimpleWall.UI;
 
@@ -15,7 +16,9 @@ namespace RenderShot
     /// </summary>
     public static class TaskEditFixture
     {
-        public static Form Create()
+        public static Form Create() => Build(CommandKind.PlayClip);
+
+        internal static Form Build(CommandKind kind)
         {
             var clip = FindFixtureClip();
             var config = new WallConfig();
@@ -23,7 +26,27 @@ namespace RenderShot
             library.Add(clip);
             library.Add(clip);
 
-            return new TaskEditDialog(null, library);
+            var dialog = new TaskEditDialog(null, library);
+            SelectCommand(dialog, kind);
+            return dialog;
+        }
+
+        /// <summary>
+        /// Picks the command so the adaptive branch is actually on screen. The first version of
+        /// this fixture only ever rendered the default, where the value box is hidden -- so it
+        /// "proved" the editor adapts while never showing the half that was broken.
+        /// </summary>
+        private static void SelectCommand(Control parent, CommandKind kind)
+        {
+            foreach (Control child in parent.Controls)
+            {
+                if (child is ComboBox combo && combo.Items.Count > 0 && combo.Items[0] is CommandKind)
+                {
+                    combo.SelectedItem = kind;
+                    return;
+                }
+                SelectCommand(child, kind);
+            }
         }
 
         private static string FindFixtureClip()

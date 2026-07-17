@@ -109,5 +109,45 @@ namespace SimpleWall.Tests
 
             Assert.Contains("play clip 7", task.Describe());
         }
+
+        /// <summary>
+        /// Json.NET casts a JSON integer to an enum without range-checking it, so a hand-edited
+        /// "Days": [9] becomes (DayOfWeek)9. Indexing the 7-name array with that threw from the
+        /// MainForm constructor -- before Application.Run existed to catch it -- and the app died
+        /// with no window and no dialog. Reproduced on the VM before this guard.
+        /// </summary>
+        [Fact]
+        public void AnImpossibleDayFromAHandEditedConfigDoesNotCrash()
+        {
+            var task = new ScheduledTask
+            {
+                Days = new List<DayOfWeek> { (DayOfWeek)9 },
+                Time = new TimeSpan(10, 0, 0),
+                Command = WallCommand.Simple(CommandKind.Stop)
+            };
+
+            var description = task.Describe(NameOf); // must not throw
+
+            Assert.Contains("9", description);
+        }
+
+        /// <summary>Seven DISTINCT values is not "every day" when one of them isn't a day.</summary>
+        [Fact]
+        public void SevenValuesWithAnImpossibleOneIsNotEveryDay()
+        {
+            var task = new ScheduledTask
+            {
+                Days = new List<DayOfWeek>
+                {
+                    DayOfWeek.Sunday, DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday,
+                    DayOfWeek.Thursday, DayOfWeek.Friday, (DayOfWeek)9
+                },
+                Time = new TimeSpan(10, 0, 0),
+                Command = WallCommand.Simple(CommandKind.Stop)
+            };
+
+            Assert.DoesNotContain("Every day", task.Describe(NameOf));
+        }
+
     }
 }

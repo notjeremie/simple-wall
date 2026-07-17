@@ -1,7 +1,7 @@
 # simple-wall — where things stand
 
 **Last updated:** 2026-07-17, session 2
-**Tests:** 152 passing, 0 failing (~28s — libvlc, thumbnail and OSC tests drive real playback and real sockets)
+**Tests:** 159 passing, 0 failing (~28s — libvlc, thumbnail and OSC tests drive real playback and real sockets)
 **Branch:** `master` (user explicitly consented to committing straight to master)
 
 ## Read these first, in this order
@@ -81,6 +81,8 @@ Every task: **implementer → spec-compliance review → code-quality review**, 
 - I specified VLC **2.x** logging options (`--file-logging`) that make `libvlc_new` return NULL. The app would have opened a window and done nothing, forever, on arrival at the wall. A reviewer proved it with a harness.
 - I designed a config save that couldn't survive the power cut it was written for: `WriteAllText` doesn't flush, so the likely artifact is a **zero-length** file — precisely the input that skipped quarantine and then got overwritten.
 - I wrote a scheduler that skips any task whose moment falls on the other side of a midnight tick. An implementer proved it by running my own code against a test it wrote.
+- Task 13: `Describe` indexed the 7-name day array with whatever was in `Days`, and Json.NET casts a JSON integer to an enum **without range-checking it** — so a hand-edited `"Days": [9]` threw from the `MainForm` constructor, before `Application.Run` existed to catch it. A reviewer **reproduced it as a live crash on the VM**: the app died with no window and no dialog, the exact outcome `CreateEngine` was written to prevent and `ConfigStore` refuses to cause.
+- Task 13: my `TaskEditFixture` claimed "the editor ADAPTS… that is a claim about what is on screen, so it gets looked at" — **and only ever rendered the branch where both adaptive controls are hidden.** In the branch it never showed, `Value:` floated 54px below its own spinner next to nothing (no `RowStyles`, so the last row ate all the slack). Nothing collapsed, so RenderShot exited 0 and the layout dump was happy. **A fixture that doesn't render the interesting state is a fixture that proves nothing.**
 - Task 13: `Scheduler.DueBetween` honoured `Spent` for **every** task — while `ScheduledTask.Spent`'s own documentation says it is "meaningless for recurring tasks". A reviewer traced the path: the scheduler sets `Spent` on a one-off, the operator later edits it into a weekly, and the stale flag rides along. The row then looks perfectly normal — ticked, not red, a sensible sentence — and **never fires again, forever, with nothing logged**. That is the exact silent lie the whole tab exists to prevent. Fixed in both places: the scheduler now honours `Spent` only for one-offs, and any save from the editor clears it.
 - Task 12: `OscReplySender` used `UdpClient.Send(bytes, len, HOSTNAME, port)`, which **resolves DNS on every call** — from `StateChanged`, on the UI thread. A reviewer measured a bare hostname like `streamdeck-pc` (i.e. exactly what someone types into `OscReplyHost`) at **~10 seconds per call**, uncached, every time. At ~100 fader packets a second the UI thread never catches up: the wall wedges permanently. My test gave false comfort — it used `no-such-host.invalid`, the one unreachable name that's fast, and asserted only "does not throw", which was never the risk. The rewritten test measures duration and fails at **25,506ms** against the old code. Resolution now happens once, off the UI thread.
 - Task 12: I marshalled with `if (InvokeRequired) BeginInvoke else call()`. **`InvokeRequired` returns false when the handle doesn't exist**, not just when you're on the right thread — and `Raise` only ever runs on the receive thread, so that `else` was never "we're on the UI thread", it was "there's no window yet", twice per run (before `Application.Run`, and after the form closes). It would have called `Execute` — native libvlc — on the receive thread. `MainForm.BeginInvokeSafely` already had the right pattern and even predicted this in a comment; I didn't reuse it.
@@ -125,6 +127,9 @@ What didn't work, so nobody re-tries it: `prlctl exec`/`prlctl start` are Parall
 Neither is needed now — rendering never touches a desktop.
 
 ## Take this list to the wall (Task 15)
+
+-1. **Check the wall PC's clock and CMOS battery.** `TickGuard` now refuses any tick window that goes backwards or exceeds 5 minutes, because a Win7 box that boots believing it is 2019 and then gets corrected by w32time would otherwise walk ~2,750 calendar dates in one tick: every weekly task fires, and every one-off in seven years fires and is burned. The guard makes that survivable; a working clock makes it moot.
+
 
 0. **THE WALL PC NEEDS A FIREWALL RULE OR THE STREAM DECK CANNOT REACH IT.** Found the hard way, and it is completely silent: with the firewall on (default, all profiles) and no rule for the app, OSC packets from another machine are dropped with no error, no log line, and nothing on screen — the app cheerfully reports "OSC listening on port 7000" the whole time. Loopback still works, so it looks fine from the machine itself. The rule (admin):
 

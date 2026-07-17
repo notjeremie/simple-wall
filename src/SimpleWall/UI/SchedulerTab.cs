@@ -26,6 +26,11 @@ namespace SimpleWall.UI
         private readonly Button _edit;
         private readonly Button _remove;
 
+        // Control.Font does not take ownership, so these are ours to dispose. One instance per app
+        // lifetime makes it cosmetic -- but this class disposes other things explicitly, and an
+        // inconsistent Dispose is how the next one gets forgotten.
+        private readonly Font _boldFont;
+
         private bool _updating;
 
         public SchedulerTab(Scheduler scheduler, ClipLibrary library, Action saveConfig = null)
@@ -35,6 +40,7 @@ namespace SimpleWall.UI
             _saveConfig = saveConfig ?? (() => { });
 
             BackColor = Color.FromArgb(24, 24, 28);
+            _boldFont = new Font(Font, FontStyle.Bold);
 
             var root = new TableLayoutPanel
             {
@@ -55,7 +61,7 @@ namespace SimpleWall.UI
                 AutoSize = true,
                 Checked = _scheduler.Enabled,
                 ForeColor = Color.FromArgb(220, 220, 226),
-                Font = new Font(Font, FontStyle.Bold),
+                Font = _boldFont,
                 Margin = new Padding(0, 0, 0, 6)
             };
             _masterEnable.CheckedChanged += OnMasterEnableChanged;
@@ -71,7 +77,7 @@ namespace SimpleWall.UI
                 TextAlign = ContentAlignment.MiddleLeft,
                 BackColor = Color.FromArgb(150, 40, 40),
                 ForeColor = Color.White,
-                Font = new Font(Font, FontStyle.Bold),
+                Font = _boldFont,
                 Margin = new Padding(0, 0, 0, 6)
             };
 
@@ -148,12 +154,14 @@ namespace SimpleWall.UI
                     _list.Items.Add(item);
                 }
 
-                _list.EndUpdate();
                 _disabledBanner.Visible = !_scheduler.Enabled;
                 _masterEnable.Checked = _scheduler.Enabled;
             }
             finally
             {
+                // In the finally: if Describe ever throws, a frozen ListView on a wall PC is a
+                // window that looks hung.
+                _list.EndUpdate();
                 _updating = false;
             }
 
@@ -248,6 +256,12 @@ namespace SimpleWall.UI
             _scheduler.Remove(task);
             _saveConfig();
             Refresh_();
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) _boldFont?.Dispose();
+            base.Dispose(disposing);
         }
     }
 }

@@ -205,6 +205,34 @@ namespace SimpleWall.Tests
             }
         }
 
+
+        /// <summary>
+        /// Opening a red "play clip 9 (no clip in this slot)" row must not quietly re-point it at
+        /// clip 1. The operator double-clicks the red row to see WHY it is red; OK is the
+        /// AcceptButton, so Enter would save the silent rewrite, the row would go green, and on
+        /// Friday the wrong clip plays.
+        /// </summary>
+        [Fact]
+        public void EditingATaskWhoseClipIsGoneDoesNotSilentlyRepointIt()
+        {
+            var orphan = new ScheduledTask
+            {
+                Days = new List<DayOfWeek> { DayOfWeek.Friday },
+                Time = new TimeSpan(18, 0, 0),
+                Command = WallCommand.PlayClip(9) // no such slot
+            };
+
+            using (var dialog = new TaskEditDialog(orphan, LibraryWithClips()))
+            {
+                Assert.Null(ClipCombo(dialog).SelectedItem);
+
+                var problem = dialog.Apply();
+
+                Assert.NotNull(problem); // refused: the operator must choose
+                Assert.Equal(9, orphan.Command.Slot); // and nothing was rewritten
+            }
+        }
+
         private static ComboBox ClipCombo(Control dialog) => Descendants(dialog).OfType<ComboBox>()
             .Single(c => c.Items.Count > 0 && c.Items[0].ToString().Contains("intro.mp4"));
 
