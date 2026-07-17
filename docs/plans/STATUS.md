@@ -1,7 +1,7 @@
 # simple-wall — where things stand
 
-**Last updated:** 2026-07-17, session 2
-**Tests:** 159 passing, 0 failing (~28s — libvlc, thumbnail and OSC tests drive real playback and real sockets)
+**Last updated:** 2026-07-17, session 3
+**Tests:** 195 passing, 0 failing (~22s — libvlc, thumbnail and OSC tests drive real playback and real sockets; +36 for logging, autostart and settings)
 **Branch:** `master` (user explicitly consented to committing straight to master)
 
 ## Read these first, in this order
@@ -28,14 +28,32 @@
 | 11 | Transport + image adjustment UI | ✅ done |
 | 12 | OSC listener + reply | ✅ done — **proven end-to-end from the Mac over real UDP** |
 | 13 | Scheduler UI + one-second tick | ✅ done — **watched a real task fire on the VM** |
-| 14 | Settings, autostart, logging | pending |
+| 14 | Settings, autostart, logging | ✅ done — **two interactive acceptance checks deferred to a live session, see below** |
 | 15 | Packaging + Win7 acceptance | pending |
 
-**Next action: Task 14 (settings, autostart, logging).** It carries three debts already logged here:
+**Next action: Task 15 (packaging + Win7 acceptance).** Task 14 is done and reviewed; both debts it owed are discharged and both spec gaps a review found were fixed.
 
-1. **A single-instance mutex** — autostart racing a manual launch is a live open thread below.
-2. **A debounced config save** — the engine deliberately never saves (an OSC fader sweep is ~100 packets/sec and every Save is an atomic write). The UI debounces its own slider saves already; an OSC-driven change still only reaches disk at exit.
-3. **The OSC firewall rule** may belong here rather than in packaging — see item 0 of the wall checklist.
+**Task 14 done — what shipped:**
+- `Logging/Log.cs`: the append log moved out of `Program` and grew a ~5MB roll (two files, ~10MB cap). A blocked roll (someone tailing over VNC) still writes the line — an oversized log is recoverable, a missing line is the evidence. Serialized so a crash landing mid-roll can't write into a file being renamed. 12 tests, including concurrent-writers-across-a-roll.
+- `Infrastructure/Autostart.cs`: HKCU\Run, no admin. **Deviated from the plan's sketch** — `CreateSubKey` not `OpenSubKey(writable)` (the sketch's null-guard was a silent no-op on the one case worth reporting), path quoted (unquoted splits on the space in "Program Files"), and `RegisteredPath`/`PointsAt` so the tab can warn when autostart points at a **different copy** — the one state a tick box can't express. 12 tests against the **real registry** (ran on the VM, so this IS the round-trip verification).
+- `UI/SettingsTab.cs`: OSC port/reply with an **honest** status — it names the port ACTUALLY bound and says "restart to apply" when the box no longer agrees (the socket can't rebind live). Machine IPs from `NetworkInterface`, **never DNS** (a bare hostname was measured at ~10s on the UI thread in Task 12). Geometry with debounced live apply, Reset-to-wall, autostart checkbox with the stale-path warning. Zeros route to the wall via `Resolve`, never applied as 0,0.
+- Single-instance **mutex** (`Local\`, GUID-named): a message box then exit on the second instance — a human double-clicked, so there's someone to read it (unlike the crash handler's deliberate silence).
+- The **OSC-driven save debt**: `MainForm` debounces a save when the engine changed brightness/contrast in the in-memory config (it deliberately never saves itself). Uses `.Equals`, not `!=`, so a `NaN` in config compares equal to itself and doesn't fire an atomic write on every clip trigger forever.
+- **Two RenderShot fixtures** — healthy and warning — and both PNGs were looked at. The warning one renders the interesting branch (long "restart to apply" and "points at a different copy" sentences), the exact thing Task 13's fixture failed to do. Render tall (`... 1000 940`) or the Startup section sits below the MainForm fold.
+- Removed the dead `WallConfig.Autostart` bool. The registry is the only source of truth; a second one would disagree the first time anyone touched msconfig.
+
+**A review changed the code (as ever):**
+- `Application.ThreadException` was logging and then SWALLOWING — a registered handler resumes the message loop, so an exception recurring at message-loop rate would roll the log forever with the wall visibly broken and no restart. Now honours the spec's "then let it die": log, then `Environment.Exit(1)`.
+- Clip triggers were logged without their source. Now mouse ("(mouse)"), OSC ("(OSC)", **PlayClip only** — a fader sweep is ~100 pkt/s and must not storm the log) and scheduler are all attributed. At 3am the one question is who moved the wall.
+- The settings boxes clamp what they show; the config could still hold a value the tab wasn't showing (a hand-edited port of 70000 → box 65535, config 70000). Now reconciled into the config once at construction, and the "restart to apply" baseline is snapshotted AFTER that reconcile so a normalised port doesn't read as a pending change.
+
+**Still owed by Task 14, and can ONLY be done on a live desktop/VNC session (the app needs a window station and the LED output window — it will not run headless over SSH):**
+1. Tick autostart in the running app, reboot the wall PC (or VM), confirm it comes back; untick, confirm the value is gone. The registry write itself is proven by the tests; the reboot-survival is not.
+2. Launch the app twice and confirm the "already running" message box. The mutex logic is simple and reviewed but has not been exercised as two real processes.
+
+Both are also on the Task 15 acceptance checklist, so they get done there if not before.
+
+**The OSC firewall rule** stays in Task 15 (item 0 of the wall checklist) — it's a `netsh` packaging action, not code, and the Task 14 spec doesn't place it here.
 
 Task 7 notes: the trap was real and the plan's own sample code fell into it — `IsButtonRelease` ran before the address switch, swallowing `/brightness 0`. The fix is structural: the release guard now lives in `Trigger()`, which wraps only the valueless addresses; `/brightness` and `/contrast` never see it, because `0` is data there. Both structures were run against the tests to prove the guard bites.
 
@@ -153,6 +171,6 @@ Crossfades/mixer (the hard cut solved the actual problem), saturation/gamma/hue,
 
 ## Open threads
 
-- A **cross-process config race** is possible (autostart + a manual launch = two instances). `ConfigStore`'s `_gate` is now `static`, which handles threads but not processes. The fix is a single-instance mutex at app startup — **Task 14**, not in `ConfigStore`.
+- ~~A **cross-process config race** is possible (autostart + a manual launch = two instances).~~ **Closed in Task 14:** a `Local\`-scoped single-instance mutex in `Program.Main` means the second instance shows "already running" and exits before it opens anything. `ConfigStore`'s `static _gate` still handles the in-process thread case.
 - `dist/simple-wall-spike.zip` (45MB) and `dist/prereq/` (169MB of .NET 4.8 + KB4474419) are gitignored, still on disk. The prereqs turned out unnecessary for this machine and can be deleted.
 - The spike still lives in `src/SimpleWall/Spike/`. **Task 9 deletes it.**

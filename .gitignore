@@ -7,3 +7,6 @@ TestResults/
 config.json
 dist/
 artifacts/
+
+# macOS
+.DS_Store

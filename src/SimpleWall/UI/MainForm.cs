@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Windows.Forms;
 using SimpleWall.Engine;
+using SimpleWall.Infrastructure;
 using SimpleWall.Model;
 using SimpleWall.Scheduling;
 
@@ -57,6 +58,18 @@ namespace SimpleWall.UI
         private readonly Timer _saveDebounce = new Timer { Interval = 800 };
         private readonly Timer _tick = new Timer { Interval = 1000 };
         private SchedulerTab _schedulerTab;
+        private SettingsTab _settingsTab;
+
+        /// <summary>
+        /// What brightness and contrast were when the config last reached disk. The engine
+        /// deliberately never saves -- an OSC fader sweep is ~100 packets a second and every Save
+        /// is an atomic write with an fsync in it -- so it changes the in-memory config and
+        /// nothing else. These two marks are how this window notices that happened and debounces a
+        /// save on the engine's behalf, which is the only route by which an OSC-driven change ever
+        /// reaches disk before exit.
+        /// </summary>
+        private float _savedBrightness;
+        private float _savedContrast;
 
         /// <summary>
         /// THE no-catch-up rule, and it is this one line: it starts at "now", so a task whose
@@ -71,8 +84,17 @@ namespace SimpleWall.UI
         private Point _dragOrigin;
         private string _notice;
 
+        /// <param name="applyGeometry">
+        /// VlcWallEngine.ApplyGeometry, so the settings tab can move the output window live.
+        /// Optional: a render fixture has no engine to move.
+        /// </param>
+        /// <param name="autostart">
+        /// Injectable only so a render fixture can show the settings tab's warning states without
+        /// touching this machine's registry.
+        /// </param>
         public MainForm(IWallEngine engine, ClipLibrary library, Scheduler scheduler, WallConfig config,
-            ThumbnailCache thumbnails, Action saveConfig = null, Action<string> log = null)
+            ThumbnailCache thumbnails, Action saveConfig = null, Action<string> log = null,
+            Action applyGeometry = null, Autostart autostart = null, string exePath = null)
         {
             _engine = engine ?? throw new ArgumentNullException(nameof(engine));
             _library = library ?? throw new ArgumentNullException(nameof(library));
@@ -81,6 +103,10 @@ namespace SimpleWall.UI
             _thumbnails = thumbnails ?? throw new ArgumentNullException(nameof(thumbnails));
             _saveConfig = saveConfig ?? (() => { });
             _log = log ?? (_ => { });
+
+            // The config as loaded is, by definition, what is on disk.
+            _savedBrightness = _config.Brightness;
+            _savedContrast = _config.Contrast;
 
             Text = "SimpleWall";
 
@@ -151,7 +177,7 @@ namespace SimpleWall.UI
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
-            root.Controls.Add(BuildTabs(), 0, 0);
+            root.Controls.Add(BuildTabs(applyGeometry, autostart, exePath), 0, 0);
             root.Controls.Add(BuildControlBar(), 0, 1);
             root.Controls.Add(_status, 0, 2);
             Controls.Add(root);
@@ -159,7 +185,7 @@ namespace SimpleWall.UI
             DragEnter += OnDragEnter;
             DragDrop += OnDropOnGrid;
 
-            _engine.StateChanged += (s, e) => BeginInvokeSafely(RefreshGrid);
+            _engine.StateChanged += (s, e) => BeginInvokeSafely(() => { RefreshGrid(); SaveAdjustSoonIfChanged(); });
             _engine.ClipUnavailable += (s, e) => BeginInvokeSafely(() => ReportUnavailable(e));
 
             BuildGrid();
@@ -176,9 +202,13 @@ namespace SimpleWall.UI
         // Tabs and the scheduler tick
         // ----------------------------------------------------------------
 
-        private Control BuildTabs()
+        private Control BuildTabs(Action applyGeometry, Autostart autostart, string exePath)
         {
             _schedulerTab = new SchedulerTab(_scheduler, _library, SaveConfig) { Dock = DockStyle.Fill };
+            _settingsTab = new SettingsTab(_config, applyGeometry, SaveConfig, autostart, exePath, _log)
+            {
+                Dock = DockStyle.Fill
+            };
 
             var clips = new TabPage("Clips") { BackColor = Color.FromArgb(24, 24, 28) };
             clips.Controls.Add(_grid);
@@ -186,20 +216,37 @@ namespace SimpleWall.UI
             var schedule = new TabPage("Schedule") { BackColor = Color.FromArgb(24, 24, 28) };
             schedule.Controls.Add(_schedulerTab);
 
+            var settings = new TabPage("Settings") { BackColor = Color.FromArgb(24, 24, 28) };
+            settings.Controls.Add(_settingsTab);
+
             var tabs = new TabControl { Dock = DockStyle.Fill };
             tabs.TabPages.Add(clips);
             tabs.TabPages.Add(schedule);
+            tabs.TabPages.Add(settings);
 
             // The schedule's sentences name clips, and its red "this cannot fire" marks depend on
             // the roster, so it must be re-read whenever the operator might have changed it rather
             // than only when the schedule itself changes.
+            //
+            // Settings re-reads for the same class of reason: autostart lives in the registry, and
+            // msconfig or Task Manager's Startup tab can turn it off behind this window's back.
             tabs.SelectedIndexChanged += (s, e) =>
             {
                 if (tabs.SelectedTab == schedule) _schedulerTab.Refresh_();
+                else if (tabs.SelectedTab == settings) _settingsTab.RefreshFromSystem();
             };
 
             return tabs;
         }
+
+        /// <summary>
+        /// Told by Program once the OSC listener has actually tried to bind, and passed straight
+        /// through to the settings tab -- which is the only thing that can say whether the port on
+        /// screen is the port in use. This window is built before the socket is opened, because
+        /// the listener needs a window handle to marshal onto.
+        /// </summary>
+        public void ReportOscStatus(int boundPort, string failure) =>
+            _settingsTab?.SetOscStatus(boundPort, failure);
 
         /// <summary>
         /// One second, on the UI thread, same as everything else that touches the engine.
@@ -473,11 +520,35 @@ namespace SimpleWall.UI
             _engine.Execute(command);
         }
 
+        /// <summary>
+        /// Persists an OSC- or scheduler-driven brightness/contrast change, which nothing else
+        /// would: the engine only ever changes the in-memory config (deliberately -- see the
+        /// fields), and this window's own slider handlers only fire for input the operator made
+        /// here. Without this, an evening of Stream Deck fader work reached disk only if the app
+        /// was closed cleanly, and the wall PC is not a machine that gets closed cleanly.
+        ///
+        /// Equals, NOT !=. NaN != NaN is TRUE, so a config.json holding "Brightness": NaN -- which
+        /// Json.NET reads happily, and which this project has already been bitten by twice -- would
+        /// compare unequal to itself forever and fire an atomic write on every clip trigger for
+        /// months. float.NaN.Equals(float.NaN) is true, which is the answer that means "nothing
+        /// changed" here.
+        /// </summary>
+        private void SaveAdjustSoonIfChanged()
+        {
+            if (_config.Brightness.Equals(_savedBrightness) && _config.Contrast.Equals(_savedContrast)) return;
+            SaveSoon();
+        }
+
         private void SaveConfig()
         {
             try
             {
                 _saveConfig();
+
+                // Only on success. A failed save leaves the marks stale on purpose, so the next
+                // state change retries rather than writing the change off.
+                _savedBrightness = _config.Brightness;
+                _savedContrast = _config.Contrast;
             }
             catch (Exception ex)
             {
@@ -623,6 +694,11 @@ namespace SimpleWall.UI
         {
             // The operator has acted, so whatever they were being told about is now stale.
             _notice = null;
+
+            // With its source, per the log's contract: at 3am the one question is whether the
+            // Stream Deck, the scheduler, or a hand on the VNC session moved the wall. The
+            // scheduler tags its own firings; OSC tags its in Program; this is the mouse.
+            _log($"Clip {slot} triggered (mouse)");
             _engine.Execute(WallCommand.PlayClip(slot));
         }
 

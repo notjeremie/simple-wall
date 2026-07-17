@@ -1,7 +1,6 @@
 using System;
-using System.Globalization;
-using System.Security.AccessControl;
 using System.IO;
+using System.Threading;
 using System.Windows.Forms;
 using SimpleWall.Engine;
 using SimpleWall.Logging;
@@ -14,7 +13,19 @@ namespace SimpleWall
 {
     internal static class Program
     {
-        private const string LogFile = "simple-wall.log";
+        /// <summary>
+        /// Local\, not Global\: this is about one operator's session on one wall PC, autostart
+        /// (HKCU\Run, so the interactive session) racing someone double-clicking the icon. Global\
+        /// would additionally need SeCreateGlobalPrivilege, which is a way to fail at startup for
+        /// no benefit.
+        ///
+        /// A GUID rather than "SimpleWall": a kernel object name is machine-wide within the
+        /// session namespace, and colliding with some other program's mutex would mean this app
+        /// silently refuses to start with no way to find out why.
+        /// </summary>
+        private const string InstanceMutex = @"Local\SimpleWall-{6a1f4c8e-3d92-4b17-9c5a-0e8f2d6b4a13}";
+
+        private static Log _log;
 
         [STAThread]
         private static void Main()
@@ -22,19 +33,65 @@ namespace SimpleWall
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
+            // initiallyOwned: false, because nothing here ever waits on it. `createdNew` alone
+            // answers the only question -- does another process hold a handle to this name -- and
+            // not owning it means a hard-killed first instance can never leave an abandoned mutex
+            // for the next launch to trip over.
+            bool createdNew;
+            using (var instance = new Mutex(false, InstanceMutex, out createdNew))
+            {
+                if (!createdNew)
+                {
+                    // A dialog, unlike the crash handler's deliberate silence: this only ever
+                    // happens because a human just double-clicked the icon, so there is someone
+                    // there to read it. Saying nothing would have them double-click again.
+                    MessageBox.Show(
+                        "SimpleWall is already running on this machine.\n\n" +
+                        "Look for its window, or check the notification area.",
+                        "SimpleWall", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                Run();
+
+                // The mutex must outlive everything above it -- the JIT is entitled to collect an
+                // object whose last use has passed, even inside its own `using`.
+                GC.KeepAlive(instance);
+            }
+        }
+
+        private static void Run()
+        {
+            // Resolved before anything can need it: Log.Open walks the candidate directories and
+            // opens the real file at each, because a writable DIRECTORY does not mean that file
+            // isn't locked. This used to be taken on faith and a locked log meant months of
+            // silent, swallowed writes.
+            _log = Log.Open();
+
             // A crash on the wall PC must leave evidence in a file, not just an
             // unhandled-exception dialog nobody without a debugger can act on.
-            Application.ThreadException += (s, e) => LogCrash("Application.ThreadException", e.Exception);
+            //
+            // ThreadException is the UI thread's backstop for the UNanticipated -- the tick and
+            // the event handlers already catch what they expect. Left to itself, a registered
+            // ThreadException handler swallows the exception and RESUMES the message loop, which
+            // sounds gentle and is not: an exception that recurs at message-loop rate (a broken
+            // paint, a repeating layout fault) would then log on every pump, rolling the log over
+            // and over, wall visibly broken, forever, with nothing on screen and no restart. So
+            // this honours the spec's "then let it die": log the full stack, then exit. A clean
+            // process death an autostart brings back at next logon beats an unattended machine
+            // limping in an undefined state. Environment.Exit, not Application.Exit, because the
+            // state is already unknown and running dispose/save paths through it could do harm --
+            // the OS reclaims the window and the VLC natives regardless.
+            Application.ThreadException += (s, e) =>
+            {
+                _log.WriteCrash("Application.ThreadException", e.Exception);
+                Environment.Exit(1);
+            };
             AppDomain.CurrentDomain.UnhandledException += (s, e) =>
-                LogCrash("AppDomain.UnhandledException", e.ExceptionObject as Exception
+                _log.WriteCrash("AppDomain.UnhandledException", e.ExceptionObject as Exception
                     ?? new Exception("Non-Exception object thrown: " + e.ExceptionObject));
 
-            // Resolve where the log actually opens before anything can need it. LogPaths'
-            // directory probe only proves the DIRECTORY is writable -- its own docs say a caller
-            // must try the real file, because a writable directory doesn't mean that file isn't
-            // locked. Nothing used to set this, so the probe's answer was taken on faith and a
-            // locked log file meant months of silent, swallowed writes.
-            LogPaths.ActiveLogDirectory = ResolveLogDirectory();
+            WriteLog($"SimpleWall starting. Log: {_log.Path}");
 
             var store = new ConfigStore(Path.Combine(LogPaths.ActiveLogDirectory, "config.json"));
             var config = store.Load();
@@ -56,14 +113,30 @@ namespace SimpleWall
                     store.Save(config);
                 };
 
-                using (var form = new MainForm(engine, library, scheduler, config, thumbnails, save, Log))
-                using (var listener = new OscListener(config.OscPort, form, Log))
-                using (var replies = new OscReplySender(engine, config, Log))
+                using (var form = new MainForm(engine, library, scheduler, config, thumbnails, save, WriteLog,
+                    engine.ApplyGeometry))
+                using (var listener = new OscListener(config.OscPort, form, WriteLog))
+                using (var replies = new OscReplySender(engine, config, WriteLog))
                 {
                     // The listener marshals onto the form, so this handler is already on the UI
                     // thread by the time it runs -- which is what the engine requires.
-                    listener.CommandReceived += (s, command) => engine.Execute(command);
-                    listener.Failed += (s, message) => Log(message);
+                    //
+                    // A clip trigger is logged with its OSC source, per the log's contract. ONLY a
+                    // clip trigger: a Stream Deck fader sweep is ~100 brightness packets a second,
+                    // and a log line each would bury the evening in noise and roll the file over
+                    // in minutes. Brightness/contrast reaching the wall is not the question the
+                    // log exists to answer; who changed which clip is.
+                    listener.CommandReceived += (s, command) =>
+                    {
+                        if (command.Kind == CommandKind.PlayClip)
+                            WriteLog($"Clip {command.Slot} triggered (OSC)");
+                        engine.Execute(command);
+                    };
+
+                    // Captured as well as logged, so the settings tab can say WHY OSC is off
+                    // rather than just that it is. Raised synchronously from Start below.
+                    string oscFailure = null;
+                    listener.Failed += (s, message) => { WriteLog(message); oscFailure = message; };
 
                     // Force the window's handle to exist BEFORE anything can arrive. The listener
                     // drops commands while there is no handle to marshal onto (it will not run
@@ -72,8 +145,12 @@ namespace SimpleWall
                     // would lose presses on every boot.
                     GC.KeepAlive(form.Handle);
 
-                    listener.Start();
+                    var listening = listener.Start();
                     replies.Start();
+
+                    // After Start, never before: the settings tab reports the port actually bound,
+                    // and the whole point of that line is that it cannot be a guess.
+                    form.ReportOscStatus(listening ? listener.BoundPort : -1, oscFailure);
 
                     Application.Run(form);
                 }
@@ -84,8 +161,10 @@ namespace SimpleWall
                 // the master checkbox can toggle the schedule (an OSC address, say -- OSC already
                 // reaches Execute).
                 try { save(); }
-                catch (Exception ex) { Log("Saving config on exit failed: " + ex); }
+                catch (Exception ex) { WriteLog("Saving config on exit failed: " + ex); }
             }
+
+            WriteLog("SimpleWall stopped.");
         }
 
         /// <summary>
@@ -99,11 +178,11 @@ namespace SimpleWall
         {
             try
             {
-                return new VlcWallEngine(library, config, Log);
+                return new VlcWallEngine(library, config, WriteLog);
             }
             catch (Exception ex)
             {
-                Log("FATAL: the VLC engine could not start: " + ex);
+                WriteLog("FATAL: the VLC engine could not start: " + ex);
                 MessageBox.Show(
                     "SimpleWall could not start VLC, so the wall cannot run.\n\n" +
                     ex.Message + "\n\nDetails are in simple-wall.log next to the app.",
@@ -113,78 +192,10 @@ namespace SimpleWall
         }
 
         /// <summary>
-        /// The first directory where the log file itself will actually open, not merely the
-        /// first writable directory. Falls back to the probe's answer, where writes will fail
-        /// silently -- but there is nowhere left to try, and refusing to start a video wall over
-        /// a log file would be worse.
+        /// The Action&lt;string&gt; every component logs through. A method rather than
+        /// `_log.Write` directly, so a line written before Log.Open (or after a failure to open
+        /// one) is dropped rather than thrown from.
         /// </summary>
-        private static string ResolveLogDirectory()
-        {
-            foreach (var candidate in LogPaths.CandidateDirectories())
-            {
-                try
-                {
-                    Directory.CreateDirectory(candidate);
-                    using (OpenLog(Path.Combine(candidate, LogFile))) { }
-                    return candidate;
-                }
-                catch
-                {
-                    // This candidate's log file is unusable -- locked, permissions, whatever.
-                    // Try the next rather than silently losing every line for the whole session.
-                }
-            }
-
-            return LogPaths.Directory;
-        }
-
-        /// <summary>
-        /// AppendData rather than FileAccess.Write: Write asks for GENERIC_WRITE, so two writers
-        /// each seek to the end independently and one can land on top of the other. This asks for
-        /// FILE_APPEND_DATA, where the OS does the positioning. It matters because Log and
-        /// LogCrash write to the same file from different threads -- i.e. exactly when the log
-        /// matters most. ReadWrite sharing so neither locks the other out.
-        /// </summary>
-        private static FileStream OpenLog(string path) =>
-            new FileStream(path, FileMode.Append, FileSystemRights.AppendData,
-                FileShare.ReadWrite, 4096, FileOptions.None);
-
-        private static void Log(string message)
-        {
-            try
-            {
-                var directory = LogPaths.ActiveLogDirectory ?? LogPaths.Directory;
-                var line = $"{DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture)} {message}{Environment.NewLine}";
-
-                using (var stream = OpenLog(Path.Combine(directory, LogFile)))
-                using (var writer = new StreamWriter(stream))
-                {
-                    writer.Write(line);
-                }
-            }
-            catch
-            {
-                // Logging must never be the reason the wall stops.
-            }
-        }
-
-        private static void LogCrash(string source, Exception ex)
-        {
-            try
-            {
-                var directory = LogPaths.ActiveLogDirectory ?? LogPaths.Directory;
-                var line = $"{DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture)} CRASH via {source}: {ex}{Environment.NewLine}";
-
-                using (var stream = OpenLog(Path.Combine(directory, LogFile)))
-                using (var writer = new StreamWriter(stream))
-                {
-                    writer.Write(line);
-                }
-            }
-            catch
-            {
-                // best effort -- there is nothing more we can do if even this fails
-            }
-        }
+        private static void WriteLog(string message) => _log?.Write(message);
     }
 }

@@ -24,6 +24,12 @@ namespace SimpleWall.Model
         public string OscReplyHost { get; set; } = "";
         public int OscReplyPort { get; set; } = 9000;
         public bool SchedulerEnabled { get; set; } = true;
-        public bool Autostart { get; set; }
+
+        // There is deliberately no Autostart field here. Autostart is an HKCU\...\Run value, and
+        // the registry is the ONLY thing that decides whether Windows launches this app -- a bool
+        // in here could only ever be a second opinion. It would disagree with the truth the first
+        // time anyone touched msconfig or Task Manager's Startup tab, and this app would then show
+        // a ticked box for a machine that never comes back after a reboot. See Infrastructure/
+        // Autostart. (One did exist, was read by nothing, and is gone.)
     }
 }
