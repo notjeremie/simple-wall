@@ -100,6 +100,28 @@ namespace SimpleWall.Model
         /// <summary>Removing a slot with no clip assigned is a harmless no-op.</summary>
         public void Remove(int slot) => _clips.RemoveAll(c => c.Slot == slot);
 
+        /// <summary>
+        /// Moves a clip to a new position in the roster, for drag-to-reorder in the grid.
+        ///
+        /// This changes the ORDER ONLY. Slot numbers travel with their clip and are not
+        /// touched, so "/clip/7" keeps triggering the same clip after the operator rearranges
+        /// the grid to taste. That is the guarantee this class exists for: a Stream Deck button
+        /// is programmed once, and tidying up the display must never silently re-point it.
+        ///
+        /// Out-of-range indices are a no-op rather than an exception -- this is driven by a
+        /// mouse drag, and there is no sensible way for the UI to apologise for one.
+        /// </summary>
+        public void Move(int fromIndex, int toIndex)
+        {
+            if (fromIndex < 0 || fromIndex >= _clips.Count) return;
+            if (toIndex < 0 || toIndex >= _clips.Count) return;
+            if (fromIndex == toIndex) return;
+
+            var clip = _clips[fromIndex];
+            _clips.RemoveAt(fromIndex);
+            _clips.Insert(toIndex, clip);
+        }
+
         /// <summary>Returns null for a slot with no clip assigned.</summary>
         public ClipEntry BySlot(int slot) => _clips.FirstOrDefault(c => c.Slot == slot);
 

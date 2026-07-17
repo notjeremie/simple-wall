@@ -20,5 +20,8 @@
          libvlc\win-x64\ behind, so LibVlcContractTests cannot find libvlc at all. Turning
          shadow copying off puts the tests in the same layout production runs in. -->
     <None Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- A real clip for ThumbnailCacheTests. Tiny (2.8KB), 1964x256 to match the wall's real
+         clips, red first second / blue second so a test can prove the FIRST frame came out. -->
+    <None Include="../fixtures/*.mp4" CopyToOutputDirectory="PreserveNewest" LinkBase="fixtures" />
   </ItemGroup>
 </Project>

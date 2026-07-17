@@ -233,5 +233,39 @@ namespace SimpleWall.Tests
             Assert.Equal(7, fromConfig[0].Slot);
             Assert.NotEqual(7, fromConfig[1].Slot);
         }
+
+        /// <summary>
+        /// The Task 4 contract, now reachable from a mouse drag: rearranging the grid must not
+        /// re-point a Stream Deck button that was programmed months ago.
+        /// </summary>
+        [Fact]
+        public void MovingAClipReordersWithoutRenumbering()
+        {
+            var library = new ClipLibrary();
+            library.Add("a.mp4");   // slot 1
+            library.Add("b.mp4");   // slot 2
+            library.Add("c.mp4");   // slot 3
+
+            library.Move(0, 2);     // drag "a" to the end
+
+            Assert.Equal(new[] { "b.mp4", "c.mp4", "a.mp4" }, library.Clips.Select(c => c.Path).ToArray());
+            Assert.Equal(new[] { 2, 3, 1 }, library.Clips.Select(c => c.Slot).ToArray());
+            Assert.Equal("a.mp4", library.BySlot(1).Path);
+        }
+
+        [Fact]
+        public void MovingWithASillyIndexIsANoOpNotACrash()
+        {
+            var library = new ClipLibrary();
+            library.Add("a.mp4");
+            library.Add("b.mp4");
+
+            library.Move(-1, 0);
+            library.Move(0, 99);
+            library.Move(0, 0);
+
+            Assert.Equal(new[] { "a.mp4", "b.mp4" }, library.Clips.Select(c => c.Path).ToArray());
+        }
+
     }
 }

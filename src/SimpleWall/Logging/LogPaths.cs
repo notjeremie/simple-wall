@@ -2,26 +2,28 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 
-namespace SimpleWall.Spike
+namespace SimpleWall.Logging
 {
     /// <summary>
-    /// Resolves a directory the spike can actually write to. The log IS the
-    /// deliverable of this trip -- if the app is extracted somewhere like
-    /// "C:\Program Files\" or a read-only share, a silent write failure means
-    /// the whole VNC round-trip comes back with nothing, while the app looks
-    /// perfectly healthy on screen. So this probes with a real write at
-    /// startup instead of assuming the EXE's own folder is writable.
+    /// Resolves a directory the app can actually write to. If the app is installed
+    /// somewhere like "C:\Program Files\" or run from a read-only share, a silent
+    /// write failure means a wall PC that misbehaves for months leaves no evidence,
+    /// while looking perfectly healthy on screen. So this probes with a real write
+    /// instead of assuming the EXE's own folder is writable.
+    ///
+    /// Inherited from the spike, which is otherwise gone: this part was right, and the
+    /// reasoning survives the trip it was written for.
     /// </summary>
-    public static class SpikeLogPaths
+    public static class LogPaths
     {
         private static readonly object ResolveLock = new object();
         private static string _resolvedDirectory;
 
         /// <summary>
         /// Ordered list of directories worth trying, cheapest/most obvious first.
-        /// SpikeForm walks this itself when opening the actual spike-log.txt handle
-        /// (see SpikeForm.OpenLogWriter), because a directory being writable doesn't
-        /// guarantee that specific file isn't locked by something else.
+        /// A caller opening the real log file should walk this itself rather than trusting
+        /// the probe below, because a directory being writable doesn't guarantee that
+        /// specific file isn't locked by something else.
         /// </summary>
         public static IEnumerable<string> CandidateDirectories()
         {
@@ -29,7 +31,7 @@ namespace SimpleWall.Spike
 
             var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             if (IsUsableFolderPath(localAppData))
-                yield return Path.Combine(localAppData, "simple-wall-spike");
+                yield return Path.Combine(localAppData, "simple-wall");
 
             var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
             if (IsUsableFolderPath(desktop))
@@ -37,13 +39,12 @@ namespace SimpleWall.Spike
         }
 
         /// <summary>
-        /// A single resolved, directory-level-writable directory, cached for the
-        /// process lifetime. Used by Program's crash handler (best-effort, and it has
-        /// no SpikeForm instance to ask directly if a crash happens before one exists
-        /// or after one was disposed). SpikeForm prefers ActiveLogDirectory below once
-        /// it has actually opened spike-log.txt somewhere, since that can differ from
-        /// this directory-level probe if the specific file (not just its directory)
-        /// turned out to be locked.
+        /// A single resolved, directory-level-writable directory, cached for the process
+        /// lifetime. Used by Program's crash handler, which is best-effort by nature: a
+        /// crash can happen before any window exists or after one is gone, so it has
+        /// nothing to ask and must resolve somewhere on its own. Prefer
+        /// <see cref="ActiveLogDirectory"/> when it is set -- it can differ from this
+        /// directory-level probe if the specific file, not just its directory, was locked.
         /// </summary>
         public static string Directory
         {
@@ -57,10 +58,9 @@ namespace SimpleWall.Spike
         }
 
         /// <summary>
-        /// Set by SpikeForm once it actually succeeds in opening spike-log.txt
-        /// somewhere. The crash handler prefers this over the generic directory
-        /// probe above when it's set, so a crash lands in the same file the running
-        /// session was actually using.
+        /// Set by whoever actually succeeds in opening the log file somewhere. The crash
+        /// handler prefers this over the generic directory probe above when it's set, so a
+        /// crash lands in the same file the running session was using.
         /// </summary>
         public static string ActiveLogDirectory { get; set; }
 
@@ -85,7 +85,7 @@ namespace SimpleWall.Spike
             try
             {
                 System.IO.Directory.CreateDirectory(directory);
-                var probePath = Path.Combine(directory, ".spike-write-probe.tmp");
+                var probePath = Path.Combine(directory, ".simple-wall-write-probe.tmp");
                 File.WriteAllText(probePath, "probe");
                 File.Delete(probePath);
                 return true;

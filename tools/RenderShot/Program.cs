@@ -76,12 +76,35 @@ namespace RenderShot
             }
         }
 
+        /// <summary>
+        /// A Form with a parameterless constructor, or a fixture: any type with a
+        /// <c>public static Form Create()</c>. Real windows have dependencies (MainForm needs an
+        /// engine), and the fakes for those belong here in the tool rather than in production
+        /// code, where a render-only constructor would be one more thing to keep honest.
+        /// </summary>
         private static Form Instantiate(string typeName)
         {
-            var type = Type.GetType(typeName) ?? Type.GetType($"{typeName}, SimpleWall");
+            var type = Type.GetType(typeName)
+                       ?? Type.GetType($"{typeName}, SimpleWall")
+                       ?? Type.GetType($"{typeName}, RenderShot");
             if (type == null) throw new ArgumentException($"no such type: {typeName}");
-            if (!typeof(Form).IsAssignableFrom(type)) throw new ArgumentException($"{typeName} is not a Form");
-            return (Form)Activator.CreateInstance(type);
+
+            if (typeof(Form).IsAssignableFrom(type))
+            {
+                if (type.GetConstructor(Type.EmptyTypes) != null)
+                    return (Form)Activator.CreateInstance(type);
+
+                throw new ArgumentException(
+                    $"{typeName} has no parameterless constructor. Add a fixture with a " +
+                    "'public static Form Create()' to RenderShot and pass that type instead.");
+            }
+
+            var create = type.GetMethod("Create", BindingFlags.Public | BindingFlags.Static,
+                null, Type.EmptyTypes, null);
+            if (create != null && typeof(Form).IsAssignableFrom(create.ReturnType))
+                return (Form)create.Invoke(null, null);
+
+            throw new ArgumentException($"{typeName} is neither a Form nor a fixture with a static Create()");
         }
 
         /// <summary>
