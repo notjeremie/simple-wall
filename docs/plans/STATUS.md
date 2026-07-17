@@ -1,7 +1,7 @@
 # simple-wall — where things stand
 
 **Last updated:** 2026-07-17, session 2
-**Tests:** 122 passing, 0 failing (~28s — the libvlc contract and thumbnail tests drive real playback)
+**Tests:** 134 passing, 0 failing (~28s — libvlc, thumbnail and OSC tests drive real playback and real sockets)
 **Branch:** `master` (user explicitly consented to committing straight to master)
 
 ## Read these first, in this order
@@ -26,15 +26,15 @@
 | 9 | Real VLC engine + output window | ✅ done |
 | 10 | Clip grid UI | ✅ done — **the spike is gone; the app now runs the real engine** |
 | 11 | Transport + image adjustment UI | ✅ done |
-| 12 | OSC listener + reply | pending |
+| 12 | OSC listener + reply | ✅ done — **proven end-to-end from the Mac over real UDP** |
 | 13 | Scheduler UI + one-second tick | pending |
 | 14 | Settings, autostart, logging | pending |
 | 15 | Packaging + Win7 acceptance | pending |
 
-**Next action: Task 12 (OSC listener + reply).** `OscParser` (Task 7) is done and tested; this is the UDP socket around it. **The listener runs off the UI thread and the engine is UI-thread-only** — every command must be marshalled, and `MainForm.BeginInvokeSafely` already expects this. Two standing rules for any UI task:
+**Next action: Task 13 (scheduler UI + one-second tick).** `Scheduler`'s due-calculation (Task 6) is done and tested; this is the UI over it plus the tick that drives it. Two standing rules for any UI task:
 
 1. **Build the control tree in the constructor, never in `Load`** — anything added in `Load` is invisible to RenderShot and it cannot tell.
-2. **Render it and look at the PNG before calling it done** (see below). It has caught something every single time — most recently an orphaned `+` tile and a first-run status line that said "0 clip(s)" instead of telling the operator what to do.
+2. **Render it and look at the PNG before calling it done.** It has caught something every single time.
 
 Task 7 notes: the trap was real and the plan's own sample code fell into it — `IsButtonRelease` ran before the address switch, swallowing `/brightness 0`. The fix is structural: the release guard now lives in `Trigger()`, which wraps only the valueless addresses; `/brightness` and `/contrast` never see it, because `0` is data there. Both structures were run against the tests to prove the guard bites.
 
@@ -80,6 +80,8 @@ Every task: **implementer → spec-compliance review → code-quality review**, 
 - I specified VLC **2.x** logging options (`--file-logging`) that make `libvlc_new` return NULL. The app would have opened a window and done nothing, forever, on arrival at the wall. A reviewer proved it with a harness.
 - I designed a config save that couldn't survive the power cut it was written for: `WriteAllText` doesn't flush, so the likely artifact is a **zero-length** file — precisely the input that skipped quarantine and then got overwritten.
 - I wrote a scheduler that skips any task whose moment falls on the other side of a midnight tick. An implementer proved it by running my own code against a test it wrote.
+- Task 12: `OscReplySender` used `UdpClient.Send(bytes, len, HOSTNAME, port)`, which **resolves DNS on every call** — from `StateChanged`, on the UI thread. A reviewer measured a bare hostname like `streamdeck-pc` (i.e. exactly what someone types into `OscReplyHost`) at **~10 seconds per call**, uncached, every time. At ~100 fader packets a second the UI thread never catches up: the wall wedges permanently. My test gave false comfort — it used `no-such-host.invalid`, the one unreachable name that's fast, and asserted only "does not throw", which was never the risk. The rewritten test measures duration and fails at **25,506ms** against the old code. Resolution now happens once, off the UI thread.
+- Task 12: I marshalled with `if (InvokeRequired) BeginInvoke else call()`. **`InvokeRequired` returns false when the handle doesn't exist**, not just when you're on the right thread — and `Raise` only ever runs on the receive thread, so that `else` was never "we're on the UI thread", it was "there's no window yet", twice per run (before `Application.Run`, and after the form closes). It would have called `Execute` — native libvlc — on the receive thread. `MainForm.BeginInvokeSafely` already had the right pattern and even predicted this in a comment; I didn't reuse it.
 - Task 11: I saved brightness on mouse-release, so the **mouse wheel** — which raises `Scroll` but never `MouseUp` — changed the wall and never persisted it. Worse, `WM_MOUSEWHEEL` goes to the *focused* control, so once an operator touched a slider, scrolling the clip grid would drift wall brightness 0.03 a notch and silently revert on restart. A reviewer measured it. The wheel is now ignored outright (`WallTrackBar`), and saving is debounced so every input route is covered.
 - Task 11: my slider clamp re-derived `Math.Round(v * 100)` instead of reusing the engine's, so a config holding `1e40` (which overflows float to infinity, and config.json is deliberately not range-validated) put the **slider at 0 while the wall ran at 2.0** — the readout saying the exact opposite of the truth. **The NaN/clamp trap has now caught three separate components**; there is one `AdjustValue.Clamp` now, and everything routes through it.
 - Task 10: I disposed `ThumbnailCache` without waiting for an in-flight extraction, so `libvlc_release` ran against a live player. A reviewer **measured a 0xC0000005 access violation, 3/3 runs** — and since .NET 4.0 a corrupted-state exception is not delivered to `AppDomain.UnhandledException`, so the crash handler writes **nothing**. Closing the window during the ~100s of extraction on a fresh launch would have killed the wall PC leaving no evidence at all.
@@ -121,6 +123,14 @@ What didn't work, so nobody re-tries it: `prlctl exec`/`prlctl start` are Parall
 Neither is needed now — rendering never touches a desktop.
 
 ## Take this list to the wall (Task 15)
+
+0. **THE WALL PC NEEDS A FIREWALL RULE OR THE STREAM DECK CANNOT REACH IT.** Found the hard way, and it is completely silent: with the firewall on (default, all profiles) and no rule for the app, OSC packets from another machine are dropped with no error, no log line, and nothing on screen — the app cheerfully reports "OSC listening on port 7000" the whole time. Loopback still works, so it looks fine from the machine itself. The rule (admin):
+
+   ```
+   netsh advfirewall firewall add rule name="SimpleWall OSC" dir=in action=allow protocol=UDP localport=7000
+   ```
+
+   Windows normally prompts on first bind, but only in an interactive session and only if someone is there to click Allow — on an autostarted wall PC nobody is. **Packaging must add this rule, not rely on the prompt.** Proven on the VM: before the rule, packets from the Mac vanished; after it, every one arrived.
 
 Things Task 9 could not settle away from the hardware. Each has a named symptom — don't just "check it works".
 

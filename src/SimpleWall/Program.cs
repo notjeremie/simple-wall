@@ -6,6 +6,7 @@ using System.Windows.Forms;
 using SimpleWall.Engine;
 using SimpleWall.Logging;
 using SimpleWall.Model;
+using SimpleWall.Osc;
 using SimpleWall.UI;
 
 namespace SimpleWall
@@ -47,7 +48,27 @@ namespace SimpleWall
                 // fires a hundred times and each Save is an atomic file write.
                 Action save = () => store.Save(config);
 
-                Application.Run(new MainForm(engine, library, config, thumbnails, save, Log));
+                using (var form = new MainForm(engine, library, config, thumbnails, save, Log))
+                using (var listener = new OscListener(config.OscPort, form, Log))
+                using (var replies = new OscReplySender(engine, config, Log))
+                {
+                    // The listener marshals onto the form, so this handler is already on the UI
+                    // thread by the time it runs -- which is what the engine requires.
+                    listener.CommandReceived += (s, command) => engine.Execute(command);
+                    listener.Failed += (s, message) => Log(message);
+
+                    // Force the window's handle to exist BEFORE anything can arrive. The listener
+                    // drops commands while there is no handle to marshal onto (it will not run
+                    // them on the receive thread), and Application.Run below is what would
+                    // otherwise create it -- so an autostarted wall PC and an eager Stream Deck
+                    // would lose presses on every boot.
+                    GC.KeepAlive(form.Handle);
+
+                    listener.Start();
+                    replies.Start();
+
+                    Application.Run(form);
+                }
 
                 // Saved once, on the way out. The engine deliberately does not save on every
                 // brightness change -- an OSC fader sweep is ~100 packets a second and

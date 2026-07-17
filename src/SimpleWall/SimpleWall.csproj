@@ -13,5 +13,6 @@
     <PackageReference Include="LibVLCSharp.WinForms" Version="3.8.2" />
     <PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.21" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="Rug.Osc" Version="1.*" />
   </ItemGroup>
 </Project>
