@@ -28,10 +28,20 @@
 | 11 | Transport + image adjustment UI | ✅ done |
 | 12 | OSC listener + reply | ✅ done — **proven end-to-end from the Mac over real UDP** |
 | 13 | Scheduler UI + one-second tick | ✅ done — **watched a real task fire on the VM** |
-| 14 | Settings, autostart, logging | ✅ done — **two interactive acceptance checks deferred to a live session, see below** |
-| 15 | Packaging + Win7 acceptance | pending |
+| 14 | Settings, autostart, logging | ✅ done |
+| 15 | Packaging + Win7 acceptance | 📦 **package built & verified; acceptance is the wall trip (not yet run)** |
 
-**Next action: Task 15 (packaging + Win7 acceptance).** Task 14 is done and reviewed; both debts it owed are discharged and both spec gaps a review found were fixed.
+**Next action: run the wall trip.** The deploy package and all its docs are built and verified on the VM; what remains is physical and only doable at the real Win7 wall over VNC. **Do not tag `v1.0` until the acceptance sign-off is recorded** — Task 15 Step 5 ties the tag to the filled-in results, and the wall is the only thing that proves the product.
+
+**Task 15 packaging — done and committed:**
+- **`packaging/build-release-package.sh`** builds `dist/simple-wall.zip` (~45MB, 486 files, self-contained). It builds Release on the VM, stages `SimpleWall/{app,install.bat,RUNBOOK.md,acceptance.md}`, strips the x86 natives, and **refuses to zip** if a `config.json`, a log, or the x86 folder leaked in (verified: none do). `dist/` is gitignored, so the SCRIPT lives in `packaging/`, not `dist/` — the spike's script was lost to the ignore, this one isn't.
+- **`packaging/install.bat`** self-elevates and adds the one thing the app can't do for itself: the inbound **UDP firewall rule** (silent if missing — see wall checklist item 0). Idempotent (deletes any stale rule first), takes an optional port arg for when Settings changes it, and does a non-blocking .NET 4.8 pre-flight. Autostart is deliberately NOT here — it's the in-app HKCU checkbox, which needs no admin and confirms on screen.
+- **`docs/RUNBOOK.md`** — the deploy runbook for whoever is at the wall (clock check, runtime check, extract-somewhere-writable, firewall, launch, geometry, clips, the checklist, autostart+reboot, overnight). Modeled on the spike's runbook, which worked.
+- **`docs/plans/2026-07-16-acceptance.md`** — the results skeleton, shipped in the package as `acceptance.md`, to fill in AT the wall.
+
+**Verified headless (what the VM can prove):** Release builds clean; the packaged app is self-contained with its x64 natives; libvlc loads and plays on the VM (`LibVlcContractTests`, part of the 195); `install.bat`'s .NET parse and netsh syntax are valid. The self-elevation, the actual `netsh add`, and every item on the acceptance checklist need the real machine.
+
+**To rebuild the package:** `./packaging/build-release-package.sh` (needs the `wallvm` alias up).
 
 **Task 14 done — what shipped:**
 - `Logging/Log.cs`: the append log moved out of `Program` and grew a ~5MB roll (two files, ~10MB cap). A blocked roll (someone tailing over VNC) still writes the line — an oversized log is recoverable, a missing line is the evidence. Serialized so a crash landing mid-roll can't write into a file being renamed. 12 tests, including concurrent-writers-across-a-roll.
@@ -156,6 +166,8 @@ Neither is needed now — rendering never touches a desktop.
    ```
 
    Windows normally prompts on first bind, but only in an interactive session and only if someone is there to click Allow — on an autostarted wall PC nobody is. **Packaging must add this rule, not rely on the prompt.** Proven on the VM: before the rule, packets from the Mac vanished; after it, every one arrived.
+
+   **Now handled by `packaging/install.bat`** — run it once as admin during deployment (it self-elevates). It runs exactly this rule, idempotently, and takes an optional port arg if Settings later changes the OSC port. This checklist item becomes "confirm `install.bat` reported `[ok] Firewall rule added`", not a hand-typed `netsh`.
 
 Things Task 9 could not settle away from the hardware. Each has a named symptom — don't just "check it works".
 
