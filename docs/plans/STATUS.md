@@ -1,7 +1,7 @@
 # simple-wall — where things stand
 
 **Last updated:** 2026-07-17, session 2
-**Tests:** 109 passing, 0 failing (~28s — the libvlc contract and thumbnail tests drive real playback)
+**Tests:** 122 passing, 0 failing (~28s — the libvlc contract and thumbnail tests drive real playback)
 **Branch:** `master` (user explicitly consented to committing straight to master)
 
 ## Read these first, in this order
@@ -25,16 +25,16 @@
 | 8 | Output geometry validation | ✅ done |
 | 9 | Real VLC engine + output window | ✅ done |
 | 10 | Clip grid UI | ✅ done — **the spike is gone; the app now runs the real engine** |
-| 11 | Transport + image adjustment UI | pending |
+| 11 | Transport + image adjustment UI | ✅ done |
 | 12 | OSC listener + reply | pending |
 | 13 | Scheduler UI + one-second tick | pending |
 | 14 | Settings, autostart, logging | pending |
 | 15 | Packaging + Win7 acceptance | pending |
 
-**Next action: Task 11 (transport + image adjustment UI).** Brightness/contrast sliders and play/pause/stop, added to `MainForm`. Two standing rules for any UI task:
+**Next action: Task 12 (OSC listener + reply).** `OscParser` (Task 7) is done and tested; this is the UDP socket around it. **The listener runs off the UI thread and the engine is UI-thread-only** — every command must be marshalled, and `MainForm.BeginInvokeSafely` already expects this. Two standing rules for any UI task:
 
 1. **Build the control tree in the constructor, never in `Load`** — anything added in `Load` is invisible to RenderShot and it cannot tell.
-2. **Render it and look at the PNG before calling it done** (see below). It has caught something every single time.
+2. **Render it and look at the PNG before calling it done** (see below). It has caught something every single time — most recently an orphaned `+` tile and a first-run status line that said "0 clip(s)" instead of telling the operator what to do.
 
 Task 7 notes: the trap was real and the plan's own sample code fell into it — `IsButtonRelease` ran before the address switch, swallowing `/brightness 0`. The fix is structural: the release guard now lives in `Trigger()`, which wraps only the valueless addresses; `/brightness` and `/contrast` never see it, because `0` is data there. Both structures were run against the tests to prove the guard bites.
 
@@ -80,6 +80,8 @@ Every task: **implementer → spec-compliance review → code-quality review**, 
 - I specified VLC **2.x** logging options (`--file-logging`) that make `libvlc_new` return NULL. The app would have opened a window and done nothing, forever, on arrival at the wall. A reviewer proved it with a harness.
 - I designed a config save that couldn't survive the power cut it was written for: `WriteAllText` doesn't flush, so the likely artifact is a **zero-length** file — precisely the input that skipped quarantine and then got overwritten.
 - I wrote a scheduler that skips any task whose moment falls on the other side of a midnight tick. An implementer proved it by running my own code against a test it wrote.
+- Task 11: I saved brightness on mouse-release, so the **mouse wheel** — which raises `Scroll` but never `MouseUp` — changed the wall and never persisted it. Worse, `WM_MOUSEWHEEL` goes to the *focused* control, so once an operator touched a slider, scrolling the clip grid would drift wall brightness 0.03 a notch and silently revert on restart. A reviewer measured it. The wheel is now ignored outright (`WallTrackBar`), and saving is debounced so every input route is covered.
+- Task 11: my slider clamp re-derived `Math.Round(v * 100)` instead of reusing the engine's, so a config holding `1e40` (which overflows float to infinity, and config.json is deliberately not range-validated) put the **slider at 0 while the wall ran at 2.0** — the readout saying the exact opposite of the truth. **The NaN/clamp trap has now caught three separate components**; there is one `AdjustValue.Clamp` now, and everything routes through it.
 - Task 10: I disposed `ThumbnailCache` without waiting for an in-flight extraction, so `libvlc_release` ran against a live player. A reviewer **measured a 0xC0000005 access violation, 3/3 runs** — and since .NET 4.0 a corrupted-state exception is not delivered to `AppDomain.UnhandledException`, so the crash handler writes **nothing**. Closing the window during the ~100s of extraction on a fresh launch would have killed the wall PC leaving no evidence at all.
 - Task 10: every error message the UI can produce was written and then **erased on the next line** — the error paths set the status text, then called `BuildGrid`, which repainted over it. "Slot 3: file not found" became "3 clip(s). Wall: slot 2." instantly. The clip-unavailable event, the engine's only way to tell an operator their button did nothing, was discarded at the last step. Measured by a reviewer, not reasoned.
 - I wrote Task 9's `ApplyGeometry` to call `GeometryValidator.Validate`, so on a **first run** the config's zeros passed validation (0,0 really does overlap the primary screen) and the output window opened on the operator's desktop while the wall stayed dark — reproducing spike finding 1, the exact thing `DefaultGeometry` was built in Task 8 to prevent. `DefaultGeometry` was dead code, called by nothing but its own tests. A reviewer traced it with the real machine's screen numbers. **Unit tests all passed: the bug lived in the composition, not the parts.**

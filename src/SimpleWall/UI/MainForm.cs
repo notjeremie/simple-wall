@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Windows.Forms;
@@ -32,7 +33,9 @@ namespace SimpleWall.UI
     {
         private readonly IWallEngine _engine;
         private readonly ClipLibrary _library;
+        private readonly WallConfig _config;
         private readonly ThumbnailCache _thumbnails;
+        private readonly Action _saveConfig;
         private readonly Action<string> _log;
 
         private readonly FlowLayoutPanel _grid;
@@ -43,21 +46,37 @@ namespace SimpleWall.UI
         private readonly Dictionary<string, Image> _images = new Dictionary<string, Image>(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _inFlight = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        private Button _playPause;
+        private Button _stop;
+        private TrackBar _brightness;
+        private TrackBar _contrast;
+        private Label _brightnessValue;
+        private Label _contrastValue;
+        private readonly Timer _saveDebounce = new Timer { Interval = 800 };
+
         private ClipBox _dragSource;
         private ClipBox _menuTarget;
         private Point _dragOrigin;
         private string _notice;
 
-        public MainForm(IWallEngine engine, ClipLibrary library, ThumbnailCache thumbnails, Action<string> log = null)
+        public MainForm(IWallEngine engine, ClipLibrary library, WallConfig config, ThumbnailCache thumbnails,
+            Action saveConfig = null, Action<string> log = null)
         {
             _engine = engine ?? throw new ArgumentNullException(nameof(engine));
             _library = library ?? throw new ArgumentNullException(nameof(library));
+            _config = config ?? throw new ArgumentNullException(nameof(config));
             _thumbnails = thumbnails ?? throw new ArgumentNullException(nameof(thumbnails));
+            _saveConfig = saveConfig ?? (() => { });
             _log = log ?? (_ => { });
 
             Text = "SimpleWall";
-            ClientSize = new Size(920, 560);
-            MinimumSize = new Size(560, 320);
+
+            // Wide enough for five tiles and the + across, with room to spare. At 920 it missed
+            // by two pixels and orphaned the + onto a row of its own, which looks broken rather
+            // than full. Five is not sacred -- it wraps on resize, as it should -- but the
+            // default size should show an arrangement that looks deliberate.
+            ClientSize = new Size(960, 600);
+            MinimumSize = new Size(560, 360);
             StartPosition = FormStartPosition.CenterScreen;
             BackColor = Color.FromArgb(24, 24, 28);
             AllowDrop = true;
@@ -88,7 +107,8 @@ namespace SimpleWall.UI
 
             _status = new Label
             {
-                Dock = DockStyle.Bottom,
+                Dock = DockStyle.Fill,
+                AutoSize = false,
                 Height = 24,
                 ForeColor = Color.FromArgb(170, 170, 176),
                 Padding = new Padding(8, 5, 8, 0),
@@ -99,8 +119,27 @@ namespace SimpleWall.UI
             _removeItem = new ToolStripMenuItem("Remove clip");
             BuildBoxMenu();
 
-            Controls.Add(_grid);
-            Controls.Add(_status);
+            _saveDebounce.Tick += (s, e) => { _saveDebounce.Stop(); SaveConfig(); };
+
+            // An explicit three-row table rather than three Dock'd controls. Docking to the same
+            // edge resolves by z-order, which is the sort of thing that reads fine and comes out
+            // in the wrong order -- and this project has already shipped one window whose layout
+            // nobody could see. Rows: grid fills, controls and status take what they need.
+            var root = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 3,
+                BackColor = Color.FromArgb(24, 24, 28)
+            };
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+            root.Controls.Add(_grid, 0, 0);
+            root.Controls.Add(BuildControlBar(), 0, 1);
+            root.Controls.Add(_status, 0, 2);
+            Controls.Add(root);
 
             DragEnter += OnDragEnter;
             DragDrop += OnDropOnGrid;
@@ -116,6 +155,216 @@ namespace SimpleWall.UI
             if (_library.WasNormalized)
                 SetNotice("config.json had duplicate or out-of-range slots and was repaired -- " +
                           "check the slot numbers against your Stream Deck.");
+        }
+
+        // ----------------------------------------------------------------
+        // Transport and image adjustment
+        // ----------------------------------------------------------------
+
+        private Control BuildControlBar()
+        {
+            var bar = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                ColumnCount = 4,
+                RowCount = 3,
+                Padding = new Padding(8, 4, 8, 4),
+                BackColor = Color.FromArgb(32, 32, 36)
+            };
+            bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+
+            var transport = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 0, 0, 4) };
+            _playPause = NewButton("Pause", (s, e) => Command(WallCommand.Simple(CommandKind.Toggle)));
+            _stop = NewButton("Stop", (s, e) => Command(WallCommand.Simple(CommandKind.Stop)));
+            transport.Controls.Add(_playPause);
+            transport.Controls.Add(_stop);
+            bar.Controls.Add(transport, 0, 0);
+            bar.SetColumnSpan(transport, 4);
+
+            _brightness = NewAdjustBar(CommandKind.Brightness);
+            _brightnessValue = NewValueLabel();
+            AddAdjustRow(bar, 1, "Brightness:", _brightness, _brightnessValue, CommandKind.Brightness);
+
+            _contrast = NewAdjustBar(CommandKind.Contrast);
+            _contrastValue = NewValueLabel();
+            AddAdjustRow(bar, 2, "Contrast:", _contrast, _contrastValue, CommandKind.Contrast);
+
+            SyncAdjustFromConfig();
+            return bar;
+        }
+
+        private void AddAdjustRow(TableLayoutPanel bar, int row, string caption, TrackBar slider, Label value, CommandKind kind)
+        {
+            bar.Controls.Add(new Label
+            {
+                Text = caption,
+                AutoSize = true,
+                ForeColor = Color.FromArgb(200, 200, 206),
+                Anchor = AnchorStyles.Left,
+                Margin = new Padding(0, 8, 6, 0)
+            }, 0, row);
+            bar.Controls.Add(slider, 1, row);
+            bar.Controls.Add(value, 2, row);
+            bar.Controls.Add(NewButton("Reset", (s, e) => SetAdjust(kind, AdjustValue.Neutral)), 3, row);
+        }
+
+        private Button NewButton(string text, EventHandler onClick)
+        {
+            var button = new Button
+            {
+                Text = text,
+                AutoSize = true,
+                MinimumSize = new Size(72, 26),
+                FlatStyle = FlatStyle.Flat,
+                ForeColor = Color.FromArgb(220, 220, 226),
+                BackColor = Color.FromArgb(48, 48, 54),
+                Margin = new Padding(0, 2, 6, 2)
+            };
+            button.FlatAppearance.BorderColor = Color.FromArgb(80, 80, 86);
+            button.Click += onClick;
+            return button;
+        }
+
+        private static Label NewValueLabel() => new Label
+        {
+            Text = "1.00",
+            AutoSize = false,
+            Width = 40,
+            ForeColor = Color.FromArgb(200, 200, 206),
+            Anchor = AnchorStyles.Left,
+            TextAlign = ContentAlignment.MiddleLeft,
+            Margin = new Padding(6, 8, 6, 0)
+        };
+
+        /// <summary>
+        /// TrackBars are integers, so 0-200 stands in for 0.0-2.0. 100 is neutral.
+        /// </summary>
+        private TrackBar NewAdjustBar(CommandKind kind)
+        {
+            var slider = new WallTrackBar
+            {
+                Minimum = 0,
+                Maximum = 200,
+                Value = 100,
+                TickFrequency = 20,
+                Dock = DockStyle.Fill
+            };
+
+            // Scroll is user-initiated ONLY, which is exactly what should reach the wall.
+            // Setting Value in code raises ValueChanged but never Scroll, so syncing the slider
+            // from the engine can't echo a command back at it.
+            slider.Scroll += (s, e) =>
+            {
+                Command(WallCommand.WithValue(kind, slider.Value / 100f));
+                SaveSoon();
+            };
+            slider.ValueChanged += (s, e) => UpdateAdjustLabels();
+            return slider;
+        }
+
+        private void SetAdjust(CommandKind kind, float value)
+        {
+            Command(WallCommand.WithValue(kind, value));
+
+            // Explicit, because a stub engine that raises no StateChanged (RenderShot's fixtures)
+            // would otherwise leave the slider showing the old value. Against the real engine
+            // this is a harmless second sync.
+            SyncAdjustFromConfig();
+            SaveSoon();
+        }
+
+        /// <summary>
+        /// One save path for every route in: drag, keyboard, Reset. ConfigStore.Save is an atomic
+        /// file write and a drag fires Scroll a hundred times, so this waits for the operator to
+        /// stop moving instead of writing per tick.
+        ///
+        /// A debounce rather than saving on mouse-up, because "release" is not a thing every input
+        /// has -- the mouse wheel raises Scroll with no MouseUp and no KeyUp at all, so a
+        /// release-based save silently dropped every wheel-driven change on the floor.
+        /// </summary>
+        private void SaveSoon()
+        {
+            _saveDebounce.Stop();
+            _saveDebounce.Start();
+        }
+
+        /// <summary>
+        /// The sliders show what the WALL is set to, not what was last dragged -- same rule as
+        /// the grid. OSC or a preset can change brightness without this window's knowledge, and
+        /// a slider sitting at the wrong value is a small lie that costs an operator real time.
+        /// </summary>
+        private void SyncAdjustFromConfig()
+        {
+            SyncSlider(_brightness, _config.Brightness);
+            SyncSlider(_contrast, _config.Contrast);
+            UpdateAdjustLabels();
+        }
+
+        /// <summary>
+        /// Skips only the slider actually being dragged, and asks Windows rather than tracking it
+        /// ourselves.
+        ///
+        /// A flag set on MouseDown and cleared on MouseUp has two failure modes this doesn't: it
+        /// suppresses BOTH sliders, so an OSC change to contrast would sit unshown while
+        /// brightness is dragged; and it can latch. Capture is broken without a MouseUp when a
+        /// system-modal window appears or the session changes -- and this machine is reachable
+        /// only over VNC, where a dropped client mid-drag is an ordinary Tuesday. That flag would
+        /// then be true for the life of the process and the sliders would never track the wall
+        /// again, silently. Capture is Windows' own state and cannot latch that way.
+        /// </summary>
+        private static void SyncSlider(TrackBar slider, float value)
+        {
+            if (slider.Capture) return;
+            slider.Value = ToSlider(value);
+        }
+
+        /// <summary>
+        /// Through the same clamp the engine uses, not a re-derived one. Re-deriving is how
+        /// `(int)Math.Round(NaN * 100)` becomes int.MinValue and floors the slider to 0 while the
+        /// wall runs at 2.0 -- the readout saying the exact opposite of the truth. A config
+        /// holding an ordinary-looking 1e40 overflows float to infinity and gets there.
+        /// </summary>
+        private static int ToSlider(float value) => (int)Math.Round(AdjustValue.Clamp(value) * 100f);
+
+        private void UpdateAdjustLabels()
+        {
+            _brightnessValue.Text = (_brightness.Value / 100f).ToString("0.00", CultureInfo.InvariantCulture);
+            _contrastValue.Text = (_contrast.Value / 100f).ToString("0.00", CultureInfo.InvariantCulture);
+        }
+
+        private void RefreshTransport()
+        {
+            _playPause.Text = _engine.IsPlaying ? "Pause" : "Play";
+
+            // Nothing loaded means Toggle and Stop would do nothing. A button that does nothing
+            // is worse than a button that is visibly unavailable.
+            var loaded = _engine.CurrentSlot != null;
+            _playPause.Enabled = loaded;
+            _stop.Enabled = loaded;
+        }
+
+        /// <summary>Everything the operator does goes through the engine. Nothing takes a shortcut.</summary>
+        private void Command(WallCommand command)
+        {
+            _notice = null;
+            _engine.Execute(command);
+        }
+
+        private void SaveConfig()
+        {
+            try
+            {
+                _saveConfig();
+            }
+            catch (Exception ex)
+            {
+                _log("Saving config failed: " + ex.Message);
+            }
         }
 
         // ----------------------------------------------------------------
@@ -210,6 +459,8 @@ namespace SimpleWall.UI
             foreach (var box in _grid.Controls.OfType<ClipBox>())
                 box.IsPlaying = _engine.CurrentSlot == box.Slot && _engine.IsPlaying;
 
+            RefreshTransport();
+            SyncAdjustFromConfig();
             UpdateStatus();
         }
 
@@ -227,6 +478,14 @@ namespace SimpleWall.UI
             if (_notice != null)
             {
                 _status.Text = _notice;
+                return;
+            }
+
+            // A first run has nothing to report and everything to explain. "0 clip(s). Nothing on
+            // the wall." is true, useless, and the first thing the operator ever reads.
+            if (_library.Clips.Count == 0)
+            {
+                _status.Text = "No clips yet -- drop video files here, or press +";
                 return;
             }
 
@@ -474,6 +733,7 @@ namespace SimpleWall.UI
                 _images.Clear();
                 _addTile.Dispose();
                 _boxMenu.Dispose();
+                _saveDebounce.Dispose();
             }
             base.Dispose(disposing);
         }

@@ -43,7 +43,11 @@ namespace SimpleWall
             {
                 if (engine == null) return; // already reported; nothing can run without it
 
-                Application.Run(new MainForm(engine, library, thumbnails, Log));
+                // Saving from the UI on slider release, rather than per scroll tick: a drag
+                // fires a hundred times and each Save is an atomic file write.
+                Action save = () => store.Save(config);
+
+                Application.Run(new MainForm(engine, library, config, thumbnails, save, Log));
 
                 // Saved once, on the way out. The engine deliberately does not save on every
                 // brightness change -- an OSC fader sweep is ~100 packets a second and

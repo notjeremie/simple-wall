@@ -381,13 +381,8 @@ namespace SimpleWall.Engine
         /// "Brightness": 50 arrives here at startup and goes straight to a native SetAdjustFloat.
         /// OscParser clamps its own inputs, but IWallEngine is the single point of contact for
         /// the mouse and the scheduler too, so the clamp belongs on this side of the boundary.
-        ///
-        /// NaN maps to neutral, not to 0 or 2: Math.Min/Max PROPAGATE NaN rather than clamping
-        /// it (the same trap that already got past one review on the OSC side), and a wall stuck
-        /// at an undefined brightness is worse than one at 1.0.
         /// </summary>
-        private static float ClampAdjust(float value) =>
-            float.IsNaN(value) ? 1f : Math.Max(0f, Math.Min(2f, value));
+        private static float ClampAdjust(float value) => AdjustValue.Clamp(value);
 
         /// <summary>
         /// Applied to BOTH players, always: the back layer must already be at the right

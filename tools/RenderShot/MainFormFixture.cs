@@ -34,7 +34,7 @@ namespace RenderShot
             var engine = new StubEngine { CurrentSlot = 2, IsPlaying = true };
             var thumbnails = new ThumbnailCache(Path.Combine(Path.GetTempPath(), "sw-rendershot-thumbs"));
 
-            return new MainForm(engine, library, thumbnails);
+            return new MainForm(engine, library, config, thumbnails);
         }
 
         /// <summary>
