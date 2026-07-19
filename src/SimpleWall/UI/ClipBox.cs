@@ -25,9 +25,11 @@ namespace SimpleWall.UI
         private static readonly Color PlayingBorder = Color.FromArgb(0, 200, 255);
         private static readonly Color MissingBorder = Color.FromArgb(220, 60, 60);
         private static readonly Color Backing = Color.FromArgb(32, 32, 36);
+        private static readonly Color DefaultGold = Color.FromArgb(255, 205, 60);
 
         private bool _isPlaying;
         private bool _isMissing;
+        private bool _isDefault;
         private Image _thumbnail;
 
         public ClipBox(int slot, string path)
@@ -59,6 +61,13 @@ namespace SimpleWall.UI
             set { if (_isMissing == value) return; _isMissing = value; Invalidate(); }
         }
 
+        /// <summary>The clip the wall boots into. Drawn as a gold star; set from config, not click.</summary>
+        public bool IsDefault
+        {
+            get => _isDefault;
+            set { if (_isDefault == value) return; _isDefault = value; Invalidate(); }
+        }
+
         public Image Thumbnail
         {
             get => _thumbnail;
@@ -85,8 +94,42 @@ namespace SimpleWall.UI
             var thumb = new Rectangle(4, 4, ThumbWidth, ThumbHeight);
             DrawThumbnail(g, thumb);
             DrawSlotBadge(g, thumb);
+            DrawDefaultBadge(g, thumb);
             DrawFilename(g);
             DrawBorder(g);
+        }
+
+        /// <summary>
+        /// A gold star in the top-right of the thumbnail (opposite the slot number) when this is
+        /// the clip the wall boots into. Drawn as a filled polygon, NOT a glyph: the Win7 wall PC
+        /// may not have a font with U+2605, and a missing glyph would silently draw nothing --
+        /// exactly the kind of invisible failure this project keeps getting bitten by.
+        /// </summary>
+        private void DrawDefaultBadge(Graphics g, Rectangle thumb)
+        {
+            if (!_isDefault) return;
+
+            var badge = new Rectangle(thumb.Right - 22, thumb.Y, 22, 22);
+            using (var brush = new SolidBrush(Color.FromArgb(200, 0, 0, 0)))
+                g.FillRectangle(brush, badge);
+
+            var smoothing = g.SmoothingMode;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            using (var brush = new SolidBrush(DefaultGold))
+                g.FillPolygon(brush, StarPoints(badge.X + badge.Width / 2f, badge.Y + badge.Height / 2f, 9f, 3.8f));
+            g.SmoothingMode = smoothing;
+        }
+
+        private static PointF[] StarPoints(float cx, float cy, float outer, float inner)
+        {
+            var points = new PointF[10];
+            for (var i = 0; i < 10; i++)
+            {
+                var angle = -Math.PI / 2 + i * Math.PI / 5;
+                var r = (i % 2 == 0) ? outer : inner;
+                points[i] = new PointF((float)(cx + r * Math.Cos(angle)), (float)(cy + r * Math.Sin(angle)));
+            }
+            return points;
         }
 
         private void DrawThumbnail(Graphics g, Rectangle thumb)

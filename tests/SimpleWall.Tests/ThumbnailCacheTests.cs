@@ -13,6 +13,7 @@ namespace SimpleWall.Tests
     /// second: asserting "a PNG appeared" would pass just as happily on a black frame VLC hadn't
     /// decoded yet, which is exactly the failure worth catching.
     /// </summary>
+    [Collection("LibVlc")]
     public class ThumbnailCacheTests : IDisposable
     {
         private static readonly string Fixture =

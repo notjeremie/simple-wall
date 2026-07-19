@@ -24,6 +24,7 @@ namespace SimpleWall.Tests
     ///
     /// These run headless: --vout=dummy and vlc://pause, so no video card is involved.
     /// </summary>
+    [Collection("LibVlc")]
     public class LibVlcContractTests
     {
         public LibVlcContractTests() => Core.Initialize();

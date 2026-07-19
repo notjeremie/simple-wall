@@ -25,6 +25,16 @@ namespace SimpleWall.Model
         public int OscReplyPort { get; set; } = 9000;
         public bool SchedulerEnabled { get; set; } = true;
 
+        // The clip SLOT the wall boots into. 0 = none (the wall starts dark -- the historical
+        // behaviour). Set from the grid's right-click "Make this clip default". Played once on
+        // launch (MainForm.OnShown), so an unattended wall coming back from a power cut shows
+        // content instead of a black wall until the next scheduled task fires -- autostart brings
+        // the app back, this puts a picture on the wall. Slot, not clip identity, because slots
+        // travel with their clip (ClipLibrary.Move) and the whole app already addresses clips by
+        // slot. Honoured only if the slot still holds a clip whose file exists; otherwise the wall
+        // is left dark and the reason is logged, never guessed.
+        public int DefaultSlot { get; set; }
+
         // There is deliberately no Autostart field here. Autostart is an HKCU\...\Run value, and
         // the registry is the ONLY thing that decides whether Windows launches this app -- a bool
         // in here could only ever be a second opinion. It would disagree with the truth the first

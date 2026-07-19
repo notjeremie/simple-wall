@@ -76,6 +76,21 @@ namespace SimpleWall.Tests
         }
 
         [Fact]
+        public void DefaultSlotRoundTripsAndIsZeroWhenAbsent()
+        {
+            var path = TempFile();
+            // Absent from an old config (or never set) means a dark boot, not slot 1.
+            Assert.Equal(0, new ConfigStore(path).Load().DefaultSlot);
+
+            var store = new ConfigStore(path);
+            var config = store.Load();
+            config.DefaultSlot = 4;
+            store.Save(config);
+
+            Assert.Equal(4, new ConfigStore(path).Load().DefaultSlot);
+        }
+
+        [Fact]
         public void CorruptConfigIsQuarantinedAndDefaultsReturned()
         {
             var path = TempFile();

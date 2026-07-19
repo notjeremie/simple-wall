@@ -46,6 +46,7 @@ namespace SimpleWall.UI
         private readonly Button _addTile;
         private readonly ContextMenuStrip _boxMenu;
         private readonly ToolStripMenuItem _removeItem;
+        private readonly ToolStripMenuItem _defaultItem;
         private readonly Dictionary<string, Image> _images = new Dictionary<string, Image>(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _inFlight = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -83,6 +84,7 @@ namespace SimpleWall.UI
         private ClipBox _menuTarget;
         private Point _dragOrigin;
         private string _notice;
+        private bool _defaultPlayed;
 
         /// <param name="applyGeometry">
         /// VlcWallEngine.ApplyGeometry, so the settings tab can move the output window live.
@@ -156,6 +158,7 @@ namespace SimpleWall.UI
 
             _boxMenu = new ContextMenuStrip();
             _removeItem = new ToolStripMenuItem("Remove clip");
+            _defaultItem = new ToolStripMenuItem("Make this clip default");
             BuildBoxMenu();
 
             _saveDebounce.Tick += (s, e) => { _saveDebounce.Stop(); SaveConfig(); };
@@ -599,7 +602,8 @@ namespace SimpleWall.UI
                 // Checked on every rebuild, not just at startup: a clip can vanish from the
                 // share at any time, and a box that still looks fine is an invitation to press
                 // a button that does nothing.
-                IsMissing = !ClipExists(clip.Path)
+                IsMissing = !ClipExists(clip.Path),
+                IsDefault = clip.Slot == _config.DefaultSlot
             };
 
             if (_images.TryGetValue(clip.Path ?? "", out var image)) box.Thumbnail = image;
@@ -632,12 +636,35 @@ namespace SimpleWall.UI
                 _menuTarget = _boxMenu.SourceControl as ClipBox;
                 if (_menuTarget == null) { e.Cancel = true; return; }
                 _removeItem.Text = "Remove clip " + _menuTarget.Slot;
+
+                // Reflects the config, not the last click: the same menu retargets across boxes,
+                // and the tick has to tell the truth about which slot the wall actually boots into.
+                var isDefault = _menuTarget.Slot == _config.DefaultSlot;
+                _defaultItem.Text = isDefault ? "Clear default clip (boots dark)" : "Make this clip default";
+                _defaultItem.Checked = isDefault;
             };
+
+            // Toggles the boot clip. Picking the current default again clears it back to a dark
+            // boot -- the same gesture in and out, so there is never a "how do I undo this" moment.
+            _defaultItem.Click += (s, e) => ToggleDefault(_menuTarget);
+            _boxMenu.Items.Add(_defaultItem);
 
             // A menu item rather than plain right-click-to-delete: right-click is far too easy
             // to do by accident, and there is no undo here.
             _removeItem.Click += (s, e) => _menuTarget?.RequestRemove();
             _boxMenu.Items.Add(_removeItem);
+        }
+
+        private void ToggleDefault(ClipBox target)
+        {
+            if (target == null) return;
+
+            _config.DefaultSlot = _config.DefaultSlot == target.Slot ? 0 : target.Slot;
+            _log(_config.DefaultSlot == 0
+                ? "Default clip cleared -- the wall will boot dark."
+                : $"Default clip set to slot {_config.DefaultSlot} -- the wall will boot into it.");
+            SaveConfig();
+            BuildGrid();
         }
 
         /// <summary>
@@ -688,6 +715,60 @@ namespace SimpleWall.UI
         {
             _notice = text;
             UpdateStatus();
+        }
+
+        /// <summary>
+        /// Plays the configured default clip once, when the window first appears.
+        ///
+        /// OnShown, NOT the constructor: the constructor runs before Application.Run, so the
+        /// message loop is not pumping and the engine's output window is not up yet -- executing a
+        /// play there is exactly the "no window station" trap the rest of the startup dance avoids.
+        /// By OnShown the form has a handle and the loop is live.
+        ///
+        /// This is the whole point of the DefaultSlot feature: an unattended wall that autostarts
+        /// after a power cut would otherwise sit BLACK until the next scheduled task -- the "no
+        /// catch-up" scheduler deliberately fires nothing on boot. The default puts a picture up
+        /// immediately. A scheduled task due seconds later still wins; this only fills the gap.
+        /// </summary>
+        protected override void OnShown(EventArgs e)
+        {
+            base.OnShown(e);
+
+            // Once only. OnShown can fire again (e.g. the form is hidden then reshown); the wall
+            // must not jump back to the default clip out from under whatever is playing.
+            if (_defaultPlayed) return;
+            _defaultPlayed = true;
+
+            var slot = DefaultClipToPlay(_config, _library, ClipExists);
+            if (slot == null)
+            {
+                // Do not guess a substitute -- an unattended wall showing an unexpected clip is
+                // worse than a dark one. If a default was ASKED for but can't run, say why so 3am
+                // has an answer; a plain dark boot (no default set) is silent and normal.
+                if (_config.DefaultSlot > 0)
+                    _log($"Default clip slot {_config.DefaultSlot} is set but unavailable -- wall left dark until a trigger.");
+                return;
+            }
+
+            _log($"Playing default clip {slot.Value} on launch");
+            _engine.Execute(WallCommand.PlayClip(slot.Value));
+        }
+
+        /// <summary>
+        /// Which slot the wall should boot into, or null for a dark boot. Pure and static so the
+        /// boot decision is tested without a window: DefaultSlot must be set (&gt;0), the slot must
+        /// still hold a clip, and that clip's file must exist. Anything else is a deliberate dark
+        /// boot -- a stale default pointing at a removed or missing clip must never fall back to
+        /// "some other clip".
+        /// </summary>
+        public static int? DefaultClipToPlay(WallConfig config, ClipLibrary library, Func<string, bool> clipExists)
+        {
+            var slot = config?.DefaultSlot ?? 0;
+            if (slot <= 0) return null;
+
+            var clip = library?.BySlot(slot);
+            if (clip == null || clipExists == null || !clipExists(clip.Path)) return null;
+            return slot;
         }
 
         private void Trigger(int slot)
