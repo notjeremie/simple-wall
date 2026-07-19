@@ -122,6 +122,21 @@ namespace SimpleWall.Model
             _clips.Insert(toIndex, clip);
         }
 
+        /// <summary>
+        /// Points an existing slot at a new file, keeping the slot NUMBER (and therefore its
+        /// Stream Deck "/clip/N" mapping) intact. Returns false if no clip holds that slot -- the
+        /// caller then decides whether to add instead. This is "same button, new video", which is
+        /// exactly what a slot's stability exists for; it deliberately does not go through Add,
+        /// which would hand the clip a different slot.
+        /// </summary>
+        public bool Replace(int slot, string newPath)
+        {
+            var clip = _clips.FirstOrDefault(c => c.Slot == slot);
+            if (clip == null) return false;
+            clip.Path = newPath;
+            return true;
+        }
+
         /// <summary>Returns null for a slot with no clip assigned.</summary>
         public ClipEntry BySlot(int slot) => _clips.FirstOrDefault(c => c.Slot == slot);
 

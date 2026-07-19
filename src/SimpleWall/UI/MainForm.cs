@@ -47,6 +47,7 @@ namespace SimpleWall.UI
         private readonly ContextMenuStrip _boxMenu;
         private readonly ToolStripMenuItem _removeItem;
         private readonly ToolStripMenuItem _defaultItem;
+        private readonly ToolStripMenuItem _replaceItem;
         private readonly Dictionary<string, Image> _images = new Dictionary<string, Image>(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _inFlight = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -146,6 +147,13 @@ namespace SimpleWall.UI
             _addTile.FlatAppearance.BorderColor = Color.FromArgb(60, 60, 64);
             _addTile.Click += (s, e) => BrowseForClips();
 
+            // Dropping files on the + tile ADDS them (unlike dropping on a clip tile, which
+            // replaces that slot). Without AllowDrop the drop is silently rejected here -- a drag
+            // aimed at the + would just do nothing, which reads as broken.
+            _addTile.AllowDrop = true;
+            _addTile.DragEnter += OnDragEnter;
+            _addTile.DragDrop += OnDropOnGrid;
+
             _status = new Label
             {
                 Dock = DockStyle.Fill,
@@ -159,6 +167,7 @@ namespace SimpleWall.UI
             _boxMenu = new ContextMenuStrip();
             _removeItem = new ToolStripMenuItem("Remove clip");
             _defaultItem = new ToolStripMenuItem("Make this clip default");
+            _replaceItem = new ToolStripMenuItem("Replace clip...");
             BuildBoxMenu();
 
             _saveDebounce.Tick += (s, e) => { _saveDebounce.Stop(); SaveConfig(); };
@@ -642,7 +651,14 @@ namespace SimpleWall.UI
                 var isDefault = _menuTarget.Slot == _config.DefaultSlot;
                 _defaultItem.Text = isDefault ? "Clear default clip (boots dark)" : "Make this clip default";
                 _defaultItem.Checked = isDefault;
+
+                _replaceItem.Text = $"Replace clip {_menuTarget.Slot}...";
             };
+
+            // Same slot number, new file -- keeps the Stream Deck "/clip/N" mapping. The other
+            // route is dragging a file straight onto the tile (OnDropOnBox).
+            _replaceItem.Click += (s, e) => ReplaceClipViaDialog(_menuTarget);
+            _boxMenu.Items.Add(_replaceItem);
 
             // Toggles the boot clip. Picking the current default again clears it back to a dark
             // boot -- the same gesture in and out, so there is never a "how do I undo this" moment.
@@ -821,6 +837,50 @@ namespace SimpleWall.UI
             if (notice != null) SetNotice(notice);
         }
 
+        /// <summary>
+        /// Points a slot at a new file, keeping the slot number and its Stream Deck mapping. If
+        /// the slot emptied out from under the menu (a rebuild race), the file is ADDED rather than
+        /// silently lost. If the replaced clip is the one on the wall, the new file is pushed to
+        /// the wall (Stop then play, the same switch the engine does anyway) so the wall matches
+        /// its now-new thumbnail instead of quietly playing the old video -- the grid-equals-wall
+        /// rule RemoveClip also protects.
+        /// </summary>
+        private void ReplaceClip(int slot, string path)
+        {
+            if (!IsClipFile(path)) { SetNotice("That doesn't look like a video file."); return; }
+
+            if (!_library.Replace(slot, path))
+            {
+                AddClips(new[] { path });
+                return;
+            }
+
+            _log($"UI: replaced slot {slot} with {path}");
+            SaveConfig();
+            BuildGrid();
+
+            if (_engine.CurrentSlot == slot && _engine.IsPlaying)
+            {
+                _engine.Execute(WallCommand.Simple(CommandKind.Stop));
+                _engine.Execute(WallCommand.PlayClip(slot));
+            }
+        }
+
+        private void ReplaceClipViaDialog(ClipBox target)
+        {
+            if (target == null) return;
+
+            using (var dialog = new OpenFileDialog
+            {
+                Multiselect = false,
+                Filter = "Video files|*.mp4;*.mov;*.avi;*.mkv;*.m4v|All files|*.*"
+            })
+            {
+                if (dialog.ShowDialog(this) == DialogResult.OK)
+                    ReplaceClip(target.Slot, dialog.FileName);
+            }
+        }
+
         private void RemoveClip(int slot)
         {
             // Removing what is on the wall would leave the grid showing nothing highlighted
@@ -865,7 +925,14 @@ namespace SimpleWall.UI
         {
             if (e.Data.GetDataPresent(DataFormats.FileDrop))
             {
-                AddClips((string[])e.Data.GetData(DataFormats.FileDrop));
+                // Dropping ON a clip tile REPLACES that slot (same number, same Stream Deck
+                // button) with the first video; any extras are added so a multi-file drop is not
+                // silently lossy. Dropping on the grid background or the + tile still just adds.
+                var videos = ((string[])e.Data.GetData(DataFormats.FileDrop)).Where(IsClipFile).ToArray();
+                if (videos.Length == 0) { SetNotice("Those don't look like video files."); return; }
+
+                ReplaceClip(target.Slot, videos[0]);
+                if (videos.Length > 1) AddClips(videos.Skip(1));
                 return;
             }
 

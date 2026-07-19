@@ -267,5 +267,34 @@ namespace SimpleWall.Tests
             Assert.Equal(new[] { "a.mp4", "b.mp4" }, library.Clips.Select(c => c.Path).ToArray());
         }
 
+        /// <summary>
+        /// "Same button, new video": replacing a slot's file keeps the slot NUMBER, so a Stream
+        /// Deck "/clip/2" that was programmed months ago still triggers the right button.
+        /// </summary>
+        [Fact]
+        public void ReplaceSwapsTheFileButKeepsTheSlotNumber()
+        {
+            var library = new ClipLibrary();
+            library.Add("old-a.mp4");   // slot 1
+            library.Add("old-b.mp4");   // slot 2
+
+            Assert.True(library.Replace(2, "new-b.mp4"));
+
+            Assert.Equal("new-b.mp4", library.BySlot(2).Path);
+            Assert.Equal("old-a.mp4", library.BySlot(1).Path);   // untouched
+            Assert.Equal(new[] { 1, 2 }, library.Clips.Select(c => c.Slot).ToArray());
+            Assert.Equal(2, library.Clips.Count);                // replaced, not added
+        }
+
+        [Fact]
+        public void ReplacingAnEmptySlotReturnsFalseAndChangesNothing()
+        {
+            var library = new ClipLibrary();
+            library.Add("a.mp4");   // slot 1
+
+            Assert.False(library.Replace(5, "nope.mp4"));
+            Assert.Single(library.Clips);
+            Assert.Null(library.BySlot(5));
+        }
     }
 }
