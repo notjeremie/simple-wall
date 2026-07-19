@@ -102,8 +102,11 @@ namespace SimpleWall.Engine
 
                 _outputWindow = new OutputWindow(_playerA, _playerB);
                 ApplyGeometry();
-                ApplyAdjust(_playerA);
-                ApplyAdjust(_playerB);
+
+                // No clip is loaded yet, so both layers start neutral. Each clip's own look is
+                // applied to the back layer as it loads (StartLoad), before it swaps in.
+                ApplyAdjust(_playerA, null);
+                ApplyAdjust(_playerB, null);
 
                 _firstPictureTimer = new Timer { Interval = PollIntervalMs };
                 _firstPictureTimer.Tick += OnFirstPictureTick;
@@ -123,6 +126,11 @@ namespace SimpleWall.Engine
         public int? CurrentSlot { get; private set; }
 
         public bool IsPlaying => CurrentSlot != null && FrontPlayer.IsPlaying;
+
+        // Clamped, because the clip's look came from config.json (not range-validated) and a reader
+        // like the OSC reply must not send a NaN/overflow out onto the network.
+        public float CurrentBrightness => ClampAdjust(CurrentLookClip?.Brightness ?? AdjustValue.Neutral);
+        public float CurrentContrast => ClampAdjust(CurrentLookClip?.Contrast ?? AdjustValue.Neutral);
 
         public event EventHandler StateChanged;
         public event EventHandler<ClipUnavailableEventArgs> ClipUnavailable;
@@ -240,7 +248,11 @@ namespace SimpleWall.Engine
             back.Play(media);
 
             // After Play, matching the spike: the adjust filter is inserted into a live vout.
-            ApplyAdjust(back);
+            // This clip's OWN look is applied to the back layer before it swaps in, so the cut
+            // lands at the right brightness/contrast with no flash at the wrong value. BySlot can
+            // return null only if the clip vanished between PlayClip's check and here, in which
+            // case neutral is the safe thing to show.
+            ApplyAdjust(back, _library.BySlot(slot));
 
             // Cover-fit the incoming clip before it swaps in, so a wrong-sized clip fills the
             // wall instead of letterboxing. Same after-Play timing as the adjust filter.
@@ -368,21 +380,35 @@ namespace SimpleWall.Engine
             RaiseStateChanged();
         }
 
+        /// <summary>
+        /// Brightness and contrast are a property of the CLIP now, not the wall: this edits the
+        /// look of whatever is currently on the wall and applies it to the front layer only (the
+        /// back layer, if loading, already holds the incoming clip's own look). RaiseStateChanged
+        /// lets the UI persist the edit -- "what I see is what's saved".
+        ///
+        /// Nothing playing means there is no clip to edit, so the change is dropped, not stored
+        /// against the wrong clip. Logged, because a fader that quietly does nothing reads as broken.
+        /// </summary>
         private void SetBrightness(float value)
         {
-            _config.Brightness = ClampAdjust(value);
-            ApplyAdjust(_playerA);
-            ApplyAdjust(_playerB);
+            var clip = CurrentLookClip;
+            if (clip == null) { _log("Brightness change ignored -- no clip on the wall."); return; }
+            clip.Brightness = ClampAdjust(value);
+            ApplyAdjust(FrontPlayer, clip);
             RaiseStateChanged();
         }
 
         private void SetContrast(float value)
         {
-            _config.Contrast = ClampAdjust(value);
-            ApplyAdjust(_playerA);
-            ApplyAdjust(_playerB);
+            var clip = CurrentLookClip;
+            if (clip == null) { _log("Contrast change ignored -- no clip on the wall."); return; }
+            clip.Contrast = ClampAdjust(value);
+            ApplyAdjust(FrontPlayer, clip);
             RaiseStateChanged();
         }
+
+        /// <summary>The clip whose look the fader/slider edits: the one on the wall, or null.</summary>
+        private ClipEntry CurrentLookClip => CurrentSlot != null ? _library.BySlot(CurrentSlot.Value) : null;
 
         /// <summary>
         /// The engine clamps rather than trusting its callers, because it cannot see where a
@@ -395,21 +421,25 @@ namespace SimpleWall.Engine
         private static float ClampAdjust(float value) => AdjustValue.Clamp(value);
 
         /// <summary>
-        /// Applied to BOTH players, always: the back layer must already be at the right
-        /// brightness before it is swapped in, or every clip change would flash at the old
-        /// value for a frame.
+        /// Applies a clip's look to one player. A null clip means "no clip" -- neutral -- which is
+        /// what the constructor uses before anything is loaded. Each layer carries the look of the
+        /// clip IT holds: the front layer the clip on the wall, the back layer the incoming clip
+        /// (set in StartLoad before the swap), so the cut never flashes at the wrong value.
         ///
-        /// Note this writes the in-memory config but does NOT save it. Saving here would mean
-        /// one atomic file write per OSC packet, and an OSC fader sweep is ~100 packets a
-        /// second. Persistence is the app's job (Task 14), on a debounce or at exit.
+        /// The mutation of the clip's stored look happens in SetBrightness/SetContrast, not here;
+        /// this only pushes a value at libvlc and does NOT save. Persistence is the UI's job, on a
+        /// debounce -- an OSC fader sweep is ~100 packets a second and a file write each is not a
+        /// thing to do.
         /// </summary>
-        private void ApplyAdjust(MediaPlayer player)
+        private void ApplyAdjust(MediaPlayer player, ClipEntry clip)
         {
-            // Clamped on read as well as on write: this also runs from the constructor, where
-            // the values came from config.json and nothing has vetted them.
+            // Clamped on read as well as on write: the values came from config.json (via the clip)
+            // and nothing on that path has vetted them -- config is deliberately not range-validated.
+            float brightness = clip != null ? clip.Brightness : AdjustValue.Neutral;
+            float contrast = clip != null ? clip.Contrast : AdjustValue.Neutral;
             player.SetAdjustInt(VideoAdjustOption.Enable, 1);
-            player.SetAdjustFloat(VideoAdjustOption.Brightness, ClampAdjust(_config.Brightness));
-            player.SetAdjustFloat(VideoAdjustOption.Contrast, ClampAdjust(_config.Contrast));
+            player.SetAdjustFloat(VideoAdjustOption.Brightness, ClampAdjust(brightness));
+            player.SetAdjustFloat(VideoAdjustOption.Contrast, ClampAdjust(contrast));
         }
 
         /// <summary>

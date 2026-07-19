@@ -128,12 +128,18 @@ namespace SimpleWall.Model
         /// caller then decides whether to add instead. This is "same button, new video", which is
         /// exactly what a slot's stability exists for; it deliberately does not go through Add,
         /// which would hand the clip a different slot.
+        ///
+        /// The look is RESET to neutral: a new video is a new clip, and inheriting the old video's
+        /// brightness/contrast would silently dim a fresh file for reasons no one could see. The
+        /// slot number and its Stream Deck mapping persist; the look does not.
         /// </summary>
         public bool Replace(int slot, string newPath)
         {
             var clip = _clips.FirstOrDefault(c => c.Slot == slot);
             if (clip == null) return false;
             clip.Path = newPath;
+            clip.Brightness = ClipEntry.NeutralLook;
+            clip.Contrast = ClipEntry.NeutralLook;
             return true;
         }
 

@@ -39,14 +39,17 @@ namespace SimpleWall.Tests
         [Fact]
         public void StateChangedPushesTheWholeStateOut()
         {
-            var config = new WallConfig
+            var config = new WallConfig { OscReplyHost = "127.0.0.1", OscReplyPort = Port };
+
+            // The look is the CLIP's, reported by the engine -- not a config field. This is the
+            // whole point of clip-looks: the reply must say what is actually on the wall.
+            var engine = new FakeWallEngine
             {
-                OscReplyHost = "127.0.0.1",
-                OscReplyPort = Port,
-                Brightness = 0.5f,
-                Contrast = 1.5f
+                CurrentSlot = 4,
+                IsPlaying = true,
+                CurrentBrightness = 0.5f,
+                CurrentContrast = 1.5f
             };
-            var engine = new FakeWallEngine { CurrentSlot = 4, IsPlaying = true };
 
             using (var sender = new OscReplySender(engine, config))
             {
@@ -59,6 +62,43 @@ namespace SimpleWall.Tests
                 Assert.Equal(1, received[OscReplySender.PlayingAddress]);
                 Assert.Equal(0.5f, received[OscReplySender.BrightnessAddress]);
                 Assert.Equal(1.5f, received[OscReplySender.ContrastAddress]);
+            }
+        }
+
+        /// <summary>
+        /// The reply must report the CLIP's look from the engine, never config.Brightness/Contrast.
+        /// After the clip-looks migration the global config values are frozen at neutral and never
+        /// written again, so a reply that read them would report a neutral wall while the actual clip
+        /// is dimmed -- the fader feedback would sit wrong forever. This pins that: config says 1.0,
+        /// the engine (the clip) says 0.3, and the wire must carry 0.3.
+        /// </summary>
+        [Fact]
+        public void ReplyReportsTheClipLookFromTheEngineNotTheConfigGlobal()
+        {
+            var config = new WallConfig
+            {
+                OscReplyHost = "127.0.0.1",
+                OscReplyPort = Port,
+                Brightness = 1.0f,   // the dead global -- must be ignored
+                Contrast = 1.0f
+            };
+            var engine = new FakeWallEngine
+            {
+                CurrentSlot = 2,
+                IsPlaying = true,
+                CurrentBrightness = 0.3f,
+                CurrentContrast = 1.8f
+            };
+
+            using (var sender = new OscReplySender(engine, config))
+            {
+                sender.Start();
+                sender.Send();
+
+                var received = ReceiveAll(4);
+
+                Assert.Equal(0.3f, received[OscReplySender.BrightnessAddress]);
+                Assert.Equal(1.8f, received[OscReplySender.ContrastAddress]);
             }
         }
 
@@ -142,18 +182,16 @@ namespace SimpleWall.Tests
             }
         }
 
-        /// <summary>Out-of-range config values must not leave here unclamped either.</summary>
+        /// <summary>
+        /// Out-of-range look values must not leave here unclamped. The value now comes from the
+        /// engine (the clip's look), and config.json is not range-validated, so a NaN/overflow can
+        /// reach the engine -- the reply clamps at the network boundary regardless.
+        /// </summary>
         [Fact]
-        public void ARidiculousConfigBrightnessIsClampedOnTheWayOut()
+        public void ARidiculousLookIsClampedOnTheWayOut()
         {
-            var config = new WallConfig
-            {
-                OscReplyHost = "127.0.0.1",
-                OscReplyPort = Port,
-                Brightness = float.NaN,
-                Contrast = 50f
-            };
-            var engine = new FakeWallEngine();
+            var config = new WallConfig { OscReplyHost = "127.0.0.1", OscReplyPort = Port };
+            var engine = new FakeWallEngine { CurrentBrightness = float.NaN, CurrentContrast = 50f };
 
             using (var sender = new OscReplySender(engine, config))
             {

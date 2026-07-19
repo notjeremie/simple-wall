@@ -63,15 +63,28 @@ namespace SimpleWall.UI
         private SettingsTab _settingsTab;
 
         /// <summary>
-        /// What brightness and contrast were when the config last reached disk. The engine
-        /// deliberately never saves -- an OSC fader sweep is ~100 packets a second and every Save
-        /// is an atomic write with an fsync in it -- so it changes the in-memory config and
-        /// nothing else. These two marks are how this window notices that happened and debounces a
-        /// save on the engine's behalf, which is the only route by which an OSC-driven change ever
-        /// reaches disk before exit.
+        /// The look (brightness/contrast) of the clip on the wall when the config last reached disk,
+        /// and which clip that was. The engine deliberately never saves -- an OSC fader sweep is
+        /// ~100 packets a second and every Save is an atomic write with an fsync in it -- so it edits
+        /// the clip's in-memory look and nothing else. These marks are how this window notices that
+        /// happened and debounces a save on the engine's behalf, which is the only route by which an
+        /// OSC- or scheduler-driven look change reaches disk before exit. The slot is tracked so a
+        /// clip switch (which changes the look shown but nothing on disk) is not read as an edit --
+        /// see SaveAdjustSoonIfChanged.
         /// </summary>
+        private int? _lookSlot;
         private float _savedBrightness;
         private float _savedContrast;
+
+        // Whether the in-memory config differs from disk because of a look edit that has not yet been
+        // persisted. Cleared only by a successful SaveConfig; a failed save leaves it set so the next
+        // state change re-arms the debounced write. See SaveAdjustSoonIfChanged.
+        private bool _configDirty;
+
+        // Sliders + Reset buttons that only mean something when a clip is on the wall. There is no
+        // global brightness anymore -- a look belongs to a clip -- so with nothing playing there is
+        // nothing to adjust, and these disable like Play/Stop already do.
+        private readonly List<Control> _adjustControls = new List<Control>();
 
         /// <summary>
         /// THE no-catch-up rule, and it is this one line: it starts at "now", so a task whose
@@ -107,9 +120,12 @@ namespace SimpleWall.UI
             _saveConfig = saveConfig ?? (() => { });
             _log = log ?? (_ => { });
 
-            // The config as loaded is, by definition, what is on disk.
-            _savedBrightness = _config.Brightness;
-            _savedContrast = _config.Contrast;
+            // The look baseline starts at whatever is on the wall right now -- nothing at
+            // construction, so neutral. SaveAdjustSoonIfChanged advances it and holds the
+            // slot-aware rule that stops a clip switch from spuriously rewriting config.json.
+            _lookSlot = _engine.CurrentSlot;
+            _savedBrightness = CurrentBrightness;
+            _savedContrast = CurrentContrast;
 
             Text = "SimpleWall";
 
@@ -371,7 +387,7 @@ namespace SimpleWall.UI
             _contrastValue = NewValueLabel();
             AddAdjustRow(bar, 2, "Contrast:", _contrast, _contrastValue, CommandKind.Contrast);
 
-            SyncAdjustFromConfig();
+            SyncAdjustFromWall();
             return bar;
         }
 
@@ -387,7 +403,12 @@ namespace SimpleWall.UI
             }, 0, row);
             bar.Controls.Add(slider, 1, row);
             bar.Controls.Add(value, 2, row);
-            bar.Controls.Add(NewButton("Reset", (s, e) => SetAdjust(kind, AdjustValue.Neutral)), 3, row);
+            var reset = NewButton("Reset", (s, e) => SetAdjust(kind, AdjustValue.Neutral));
+            bar.Controls.Add(reset, 3, row);
+
+            // Both go dark when no clip is on the wall -- there is no look to edit.
+            _adjustControls.Add(slider);
+            _adjustControls.Add(reset);
         }
 
         private Button NewButton(string text, EventHandler onClick)
@@ -451,7 +472,7 @@ namespace SimpleWall.UI
             // Explicit, because a stub engine that raises no StateChanged (RenderShot's fixtures)
             // would otherwise leave the slider showing the old value. Against the real engine
             // this is a harmless second sync.
-            SyncAdjustFromConfig();
+            SyncAdjustFromWall();
             SaveSoon();
         }
 
@@ -471,16 +492,25 @@ namespace SimpleWall.UI
         }
 
         /// <summary>
-        /// The sliders show what the WALL is set to, not what was last dragged -- same rule as
-        /// the grid. OSC or a preset can change brightness without this window's knowledge, and
-        /// a slider sitting at the wrong value is a small lie that costs an operator real time.
+        /// The sliders show the CURRENT CLIP's look -- what is on the wall -- not what was last
+        /// dragged, same rule as the grid. OSC, the scheduler, or a clip switch can change the look
+        /// without this window's knowledge, and a slider sitting at the wrong value is a small lie
+        /// that costs an operator real time. With no clip on the wall there is no look, so the
+        /// sliders read neutral (and RefreshTransport has disabled them).
         /// </summary>
-        private void SyncAdjustFromConfig()
+        private void SyncAdjustFromWall()
         {
-            SyncSlider(_brightness, _config.Brightness);
-            SyncSlider(_contrast, _config.Contrast);
+            SyncSlider(_brightness, CurrentBrightness);
+            SyncSlider(_contrast, CurrentContrast);
             UpdateAdjustLabels();
         }
+
+        /// <summary>The clip on the wall whose look the sliders show and edit, or null.</summary>
+        private ClipEntry CurrentClip =>
+            _engine.CurrentSlot != null ? _library.BySlot(_engine.CurrentSlot.Value) : null;
+
+        private float CurrentBrightness => CurrentClip?.Brightness ?? ClipEntry.NeutralLook;
+        private float CurrentContrast => CurrentClip?.Contrast ?? ClipEntry.NeutralLook;
 
         /// <summary>
         /// Skips only the slider actually being dragged, and asks Windows rather than tracking it
@@ -523,6 +553,9 @@ namespace SimpleWall.UI
             var loaded = _engine.CurrentSlot != null;
             _playPause.Enabled = loaded;
             _stop.Enabled = loaded;
+
+            // Same for the look: with no clip on the wall there is nothing to brighten or reset.
+            foreach (var control in _adjustControls) control.Enabled = loaded;
         }
 
         /// <summary>Everything the operator does goes through the engine. Nothing takes a shortcut.</summary>
@@ -533,23 +566,80 @@ namespace SimpleWall.UI
         }
 
         /// <summary>
-        /// Persists an OSC- or scheduler-driven brightness/contrast change, which nothing else
-        /// would: the engine only ever changes the in-memory config (deliberately -- see the
-        /// fields), and this window's own slider handlers only fire for input the operator made
-        /// here. Without this, an evening of Stream Deck fader work reached disk only if the app
-        /// was closed cleanly, and the wall PC is not a machine that gets closed cleanly.
+        /// Persists an OSC- or scheduler-driven look change, which nothing else would: the engine
+        /// only ever edits the clip's in-memory look (deliberately -- an OSC fader sweep is ~100
+        /// packets a second and every Save is an atomic write), and this window's own slider
+        /// handlers only fire for input the operator made here. Without this, an evening of Stream
+        /// Deck fader work reached disk only if the app was closed cleanly, and the wall PC is not a
+        /// machine that gets closed cleanly.
         ///
-        /// Equals, NOT !=. NaN != NaN is TRUE, so a config.json holding "Brightness": NaN -- which
-        /// Json.NET reads happily, and which this project has already been bitten by twice -- would
-        /// compare unequal to itself forever and fire an atomic write on every clip trigger for
-        /// months. float.NaN.Equals(float.NaN) is true, which is the answer that means "nothing
-        /// changed" here.
+        /// SLOT-AWARE. A look now belongs to a clip, so switching clips changes what the sliders
+        /// read without editing anything -- the incoming clip's look is already on disk. Saving on a
+        /// switch would rewrite config.json on every Stream Deck press for no reason. So a change is
+        /// only an edit worth saving when it is to the SAME clip that was on the wall last time; a
+        /// switch just re-baselines and returns.
+        ///
+        /// Equals, NOT !=. NaN != NaN is TRUE, so a look holding NaN -- which Json.NET reads happily,
+        /// and which this project has already been bitten by twice -- would compare unequal to itself
+        /// forever and fire an atomic write on every event for months. float.NaN.Equals(float.NaN)
+        /// is true, which is the answer that means "nothing changed" here.
         /// </summary>
         private void SaveAdjustSoonIfChanged()
         {
-            if (_config.Brightness.Equals(_savedBrightness) && _config.Contrast.Equals(_savedContrast)) return;
-            SaveSoon();
+            var slot = _engine.CurrentSlot;
+            float brightness = CurrentBrightness, contrast = CurrentContrast;
+
+            var change = ClassifyLookChange(_lookSlot, _savedBrightness, _savedContrast, slot, brightness, contrast);
+
+            // A clip switch persists nothing new -- the incoming clip's look is already on disk -- so
+            // re-baseline the slot-aware detector to it. Any UNSAVED edit is tracked by _configDirty,
+            // not this baseline, so re-basing here cannot lose it.
+            if (change == LookChange.Switched)
+            {
+                _lookSlot = slot;
+                _savedBrightness = brightness;
+                _savedContrast = contrast;
+            }
+
+            // The config differs from disk until a save succeeds, so keep a save armed on EVERY state
+            // change while dirty -- including a clip switch. This is the retry: a failed SaveConfig
+            // leaves _configDirty set, and the next state change re-arms the debounce (SaveConfig
+            // writes the WHOLE config, so a since-switched clip's edit still lands). Event-driven, so
+            // an idle wall does not spin the timer; matching the old global design's retry, which a
+            // pure slot baseline would have quietly dropped on the first switch after a failed save.
+            _configDirty = PendingSaveAfter(change, _configDirty);
+            if (_configDirty) SaveSoon();
         }
+
+        public enum LookChange { None, Switched, Edited }
+
+        /// <summary>
+        /// Whether a look change is a clip SWITCH (re-baseline, don't save), a real EDIT (save), or
+        /// NOTHING. Pure so the slot-aware rule is tested without a window -- the same reason
+        /// DefaultClipToPlay is extracted. A switch is decided first and by slot alone: the incoming
+        /// clip's look, whatever it is, is already on disk. Equals, NOT !=, so a NaN look compares
+        /// equal to itself and a corrupted value doesn't fire a write on every event forever.
+        /// </summary>
+        public static LookChange ClassifyLookChange(
+            int? previousSlot, float previousBrightness, float previousContrast,
+            int? currentSlot, float currentBrightness, float currentContrast)
+        {
+            if (!Nullable.Equals(currentSlot, previousSlot)) return LookChange.Switched;
+            if (currentBrightness.Equals(previousBrightness) && currentContrast.Equals(previousContrast))
+                return LookChange.None;
+            return LookChange.Edited;
+        }
+
+        /// <summary>
+        /// Whether the config is still un-persisted after a state change, which is also whether a
+        /// save should be (re-)armed. A look EDIT dirties it; a SWITCH or NONE dirties nothing but
+        /// must still keep a save armed while a PRIOR edit is unsaved -- that is the failed-save
+        /// retry, and dropping it on a switch was the exact regression a review caught. Only a
+        /// successful save clears the flag (in SaveConfig); this pure form lets that
+        /// failed-save-then-switch path be tested without a window.
+        /// </summary>
+        public static bool PendingSaveAfter(LookChange change, bool wasDirty) =>
+            wasDirty || change == LookChange.Edited;
 
         private void SaveConfig()
         {
@@ -557,10 +647,14 @@ namespace SimpleWall.UI
             {
                 _saveConfig();
 
-                // Only on success. A failed save leaves the marks stale on purpose, so the next
-                // state change retries rather than writing the change off.
-                _savedBrightness = _config.Brightness;
-                _savedContrast = _config.Contrast;
+                // Only on success. A failed save leaves _configDirty set on purpose, so the next
+                // state change retries rather than writing the change off. The baseline is the look
+                // of the clip currently on the wall -- the whole config (every clip's look) was just
+                // written, so that is what is now on disk.
+                _configDirty = false;
+                _lookSlot = _engine.CurrentSlot;
+                _savedBrightness = CurrentBrightness;
+                _savedContrast = CurrentContrast;
             }
             catch (Exception ex)
             {
@@ -692,7 +786,7 @@ namespace SimpleWall.UI
                 box.IsPlaying = _engine.CurrentSlot == box.Slot && _engine.IsPlaying;
 
             RefreshTransport();
-            SyncAdjustFromConfig();
+            SyncAdjustFromWall();
             UpdateStatus();
         }
 

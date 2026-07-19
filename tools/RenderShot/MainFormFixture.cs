@@ -17,7 +17,9 @@ namespace RenderShot
     /// </summary>
     public static class MainFormFixture
     {
-        public static Form Create()
+        public static Form Create() => Build(currentSlot: 2);
+
+        public static Form Build(int? currentSlot)
         {
             // A real file, so those boxes are in their normal state rather than red. The
             // thumbnails stay as placeholders: extraction is async by design and RenderShot has
@@ -32,7 +34,13 @@ namespace RenderShot
             library.Add(@"V:\VIZRT\INSIDE_WALL\WALL_BEFORE_SUNSET_1964X256.mp4"); // slot 3 -- missing
             library.Add(real);                                    // slot 4
 
-            var engine = new StubEngine { CurrentSlot = 2, IsPlaying = true };
+            // The playing clip carries a non-neutral look, so the render proves the sliders read
+            // the CLIP's saved brightness/contrast (not a global) -- brightness well below the
+            // midpoint, contrast above it, both plainly off-centre in the picture.
+            library.BySlot(2).Brightness = 0.55f;
+            library.BySlot(2).Contrast = 1.35f;
+
+            var engine = new StubEngine { CurrentSlot = currentSlot, IsPlaying = currentSlot != null };
             var thumbnails = new ThumbnailCache(Path.Combine(Path.GetTempPath(), "sw-rendershot-thumbs"));
 
             return new MainForm(engine, library, new Scheduler(config.Tasks), config, thumbnails);
@@ -63,6 +71,11 @@ namespace RenderShot
         {
             public int? CurrentSlot { get; set; }
             public bool IsPlaying { get; set; }
+
+            // Irrelevant to the render -- MainForm reads the clip's look from the library, not the
+            // engine -- but the interface requires them.
+            public float CurrentBrightness => AdjustValue.Neutral;
+            public float CurrentContrast => AdjustValue.Neutral;
 
 #pragma warning disable 67 // never raised: a render is a still life
             public event EventHandler StateChanged;

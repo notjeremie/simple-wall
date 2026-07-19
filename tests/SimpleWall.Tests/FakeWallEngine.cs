@@ -9,6 +9,11 @@ namespace SimpleWall.Tests
         public List<WallCommand> Received { get; } = new List<WallCommand>();
         public int? CurrentSlot { get; set; }
         public bool IsPlaying { get; set; }
+
+        // The current clip's look. Settable so a test can stand in for "clip 2 is on the wall at
+        // brightness 0.55" without a real engine or library. Default neutral.
+        public float CurrentBrightness { get; set; } = AdjustValue.Neutral;
+        public float CurrentContrast { get; set; } = AdjustValue.Neutral;
         public event EventHandler StateChanged;
         public event EventHandler<ClipUnavailableEventArgs> ClipUnavailable;
 

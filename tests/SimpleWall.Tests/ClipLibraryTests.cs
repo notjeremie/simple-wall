@@ -296,5 +296,33 @@ namespace SimpleWall.Tests
             Assert.Single(library.Clips);
             Assert.Null(library.BySlot(5));
         }
+
+        /// <summary>
+        /// A replaced clip is a NEW clip in the same slot, so it must not inherit the old video's
+        /// dimming -- the look resets to neutral. Otherwise a fresh file would come up silently dark
+        /// for a reason no one could see.
+        /// </summary>
+        [Fact]
+        public void ReplaceResetsTheLookToNeutral()
+        {
+            var library = new ClipLibrary();
+            library.Add("old.mp4");   // slot 1
+            var clip = library.BySlot(1);
+            clip.Brightness = 0.4f;
+            clip.Contrast = 1.7f;
+
+            Assert.True(library.Replace(1, "new.mp4"));
+
+            Assert.Equal(ClipEntry.NeutralLook, library.BySlot(1).Brightness);
+            Assert.Equal(ClipEntry.NeutralLook, library.BySlot(1).Contrast);
+        }
+
+        [Fact]
+        public void ANewClipEntryHasANeutralLook()
+        {
+            var clip = new ClipEntry();
+            Assert.Equal(ClipEntry.NeutralLook, clip.Brightness);
+            Assert.Equal(ClipEntry.NeutralLook, clip.Contrast);
+        }
     }
 }

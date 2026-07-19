@@ -95,6 +95,26 @@ namespace SimpleWall
 
             var store = new ConfigStore(Path.Combine(LogPaths.ActiveLogDirectory, "config.json"));
             var config = store.Load();
+
+            // One-time: move a pre-look config's global brightness/contrast onto each clip, so the
+            // wall looks identical the first time this build runs. Persisting it makes the next
+            // launch a no-op; if the save throws we must NOT crash the boot (a dark wall with no
+            // window is the worst outcome). The migration self-heals -- it re-seeds next launch, or a
+            // later look-edit save writes the whole (already-seeded) config -- so a lost save here
+            // only costs a repeat, never correctness.
+            if (ConfigMigration.SeedClipLooks(config))
+            {
+                try
+                {
+                    store.Save(config);
+                    WriteLog("Migrated global brightness/contrast onto clip looks.");
+                }
+                catch (Exception ex)
+                {
+                    WriteLog("Clip-looks migration could not be saved (will retry next launch): " + ex.Message);
+                }
+            }
+
             var library = new ClipLibrary(config.Clips);
             var scheduler = new Scheduler(config.Tasks) { Enabled = config.SchedulerEnabled };
 

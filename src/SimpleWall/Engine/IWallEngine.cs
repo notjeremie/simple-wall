@@ -37,6 +37,16 @@ namespace SimpleWall.Engine
         bool IsPlaying { get; }
 
         /// <summary>
+        /// The look currently on the wall -- the brightness/contrast of the clip in
+        /// <see cref="CurrentSlot"/>, or neutral when nothing is playing. A look belongs to a clip,
+        /// not the wall, so anything that reports "what the wall is set to" (the OSC reply feedback)
+        /// must read this, not a config field -- the old global brightness/contrast is frozen at
+        /// neutral after the clip-looks migration.
+        /// </summary>
+        float CurrentBrightness { get; }
+        float CurrentContrast { get; }
+
+        /// <summary>
         /// Raised after any <see cref="Execute"/> call that may have changed
         /// <see cref="CurrentSlot"/> or <see cref="IsPlaying"/>. The UI must repaint from
         /// those properties on this event rather than from its own click handler, so that

@@ -31,6 +31,8 @@ namespace RenderShot
         {
             public int? CurrentSlot => null;
             public bool IsPlaying => false;
+            public float CurrentBrightness => AdjustValue.Neutral;
+            public float CurrentContrast => AdjustValue.Neutral;
 
 #pragma warning disable 67 // never raised: a render is a still life
             public event EventHandler StateChanged;

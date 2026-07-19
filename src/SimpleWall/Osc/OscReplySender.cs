@@ -137,8 +137,12 @@ namespace SimpleWall.Osc
             {
                 SendMessage(new OscMessage(SlotAddress, _engine.CurrentSlot ?? NoSlot));
                 SendMessage(new OscMessage(PlayingAddress, _engine.IsPlaying ? 1 : 0));
-                SendMessage(new OscMessage(BrightnessAddress, AdjustValue.Clamp(_config.Brightness)));
-                SendMessage(new OscMessage(ContrastAddress, AdjustValue.Clamp(_config.Contrast)));
+                // The CLIP's look on the wall now, from the engine -- NOT _config.Brightness/Contrast,
+                // which the clip-looks migration froze at neutral. Clamped again at this boundary:
+                // the production engine clamps, but nothing out on the network should ever receive a
+                // NaN/overflow, so the reply does not depend on that promise being kept.
+                SendMessage(new OscMessage(BrightnessAddress, AdjustValue.Clamp(_engine.CurrentBrightness)));
+                SendMessage(new OscMessage(ContrastAddress, AdjustValue.Clamp(_engine.CurrentContrast)));
             }
             catch (Exception ex)
             {
