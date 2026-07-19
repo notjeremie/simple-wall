@@ -171,6 +171,12 @@ namespace SimpleWall.Engine
             _config.OutputHeight = bounds.Height;
 
             _outputWindow.SetGeometry(bounds);
+
+            // Re-crop to the (possibly new) wall ratio so cover-fit tracks a geometry change.
+            // Both layers, so the idle back player is already correct before its next clip.
+            ApplyCropToFill(_playerA);
+            ApplyCropToFill(_playerB);
+
             _log($"Output geometry {bounds.Width}x{bounds.Height} @{bounds.X},{bounds.Y}");
         }
 
@@ -235,6 +241,10 @@ namespace SimpleWall.Engine
 
             // After Play, matching the spike: the adjust filter is inserted into a live vout.
             ApplyAdjust(back);
+
+            // Cover-fit the incoming clip before it swaps in, so a wrong-sized clip fills the
+            // wall instead of letterboxing. Same after-Play timing as the adjust filter.
+            ApplyCropToFill(back);
 
             _loadStopwatch.Restart();
             _firstPictureTimer.Start();
@@ -400,6 +410,42 @@ namespace SimpleWall.Engine
             player.SetAdjustInt(VideoAdjustOption.Enable, 1);
             player.SetAdjustFloat(VideoAdjustOption.Brightness, ClampAdjust(_config.Brightness));
             player.SetAdjustFloat(VideoAdjustOption.Contrast, ClampAdjust(_config.Contrast));
+        }
+
+        /// <summary>
+        /// Cover-fit, not letterbox. Crops the source to the OUTPUT window's aspect ratio so a
+        /// clip whose dimensions do not match the wall FILLS it -- losing left/right or top/bottom
+        /// (whichever overflows) instead of showing black bars. The real wall is 1664x256 but the
+        /// clips are authored 1964x256; without this they letterbox to ~217px tall. A clip already
+        /// at the wall's ratio is cropped by nothing, so this is a no-op for correct content.
+        ///
+        /// CropGeometry as a "W:H" RATIO crops centred and does NOT distort. AspectRatio would
+        /// stretch to fill and distort -- deliberately not used. Applied to both layers (the back
+        /// clip must be cover-fitted before it swaps in) and re-applied on every ApplyGeometry so
+        /// a geometry change re-crops to the new ratio.
+        /// </summary>
+        private void ApplyCropToFill(MediaPlayer player)
+        {
+            var ratio = CropRatio(_config.OutputWidth, _config.OutputHeight);
+            if (ratio != null) player.CropGeometry = ratio;
+        }
+
+        /// <summary>
+        /// The output aspect ratio as a reduced "W:H" crop string, or null for a not-yet-resolved
+        /// (zero) geometry. Reduced by GCD so 1664x256 becomes "13:2" -- canonical and free of any
+        /// large-number parsing quirk. Pure and static so the ratio maths is tested without libvlc.
+        /// </summary>
+        public static string CropRatio(int width, int height)
+        {
+            if (width <= 0 || height <= 0) return null;
+            var g = Gcd(width, height);
+            return $"{width / g}:{height / g}";
+        }
+
+        private static int Gcd(int a, int b)
+        {
+            while (b != 0) { var t = b; b = a % b; a = t; }
+            return a;
         }
 
         /// <summary>
