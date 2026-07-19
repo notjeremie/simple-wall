@@ -1,7 +1,7 @@
 # simple-wall — where things stand
 
-**Last updated:** 2026-07-19, session 4
-**Tests:** 208 passing, 0 failing (~22s — libvlc, thumbnail and OSC tests drive real playback and real sockets; +13 for the default-clip and cover-fit features, plus a fix for a latent parallel-libvlc-init flake)
+**Last updated:** 2026-07-19, session 5
+**Tests:** 229 passing, 0 failing (+21 this session — per-clip look defaults, Replace-resets-look, `ConfigMigration` seeding, slot-aware `ClassifyLookChange`, `PendingSaveAfter` retry, and the OSC-reply-reads-clip-look regression test)
 **Branch:** `master` (user explicitly consented to committing straight to master)
 
 ## Read these first, in this order
@@ -29,9 +29,9 @@
 | 12 | OSC listener + reply | ✅ done — **proven end-to-end from the Mac over real UDP** |
 | 13 | Scheduler UI + one-second tick | ✅ done — **watched a real task fire on the VM** |
 | 14 | Settings, autostart, logging | ✅ done |
-| 15 | Packaging + Win7 acceptance | 🟢 **wall trip run 2026-07-19; every checklist item passed; sign-off pending only tonight's overnight soak** — results in `docs/plans/2026-07-16-acceptance.md` |
+| 15 | Packaging + Win7 acceptance | 🟢 **wall trip run 2026-07-19; every checklist item passed; sign-off pending the overnight soak, now re-running on the session-5 clip-looks build** — results in `docs/plans/2026-07-16-acceptance.md` |
 
-**Next action: check tomorrow that the overnight soak held, then merge `master` into `main` and tag `v1.0`.** `master` is at `bcef66e`, three commits ahead of the packaging commit `f1f1533` (`23be9bf` DXVA2 fix, `08a8ce2` default clip, `bcef66e` cover-fit). **Do not tag yet** — the soak (checklist item 13) is still running and is the last open item.
+**Next action: the user is deploying the v1.0 CANDIDATE build (`9f46e59`, clip-looks) tonight — check tomorrow that the overnight soak held on THIS build, then merge `master` into `main` and tag `v1.0`.** `master` is at `9f46e59`, six commits ahead of the packaging commit `f1f1533` (`23be9bf` DXVA2 fix, `08a8ce2` default clip, `bcef66e` cover-fit, `115454f` replace-in-place, `9f46e59` clip-looks). The staged exe at `dist/hotfix/SimpleWall.exe` (101,376 bytes) is this build. **Do not tag yet** — the soak (checklist item 13) needs a clean run against `9f46e59` and is the last open item.
 
 **Task 15 packaging — done and committed:**
 - **`packaging/build-release-package.sh`** builds `dist/simple-wall.zip` (~45MB, 486 files, self-contained). It builds Release on the VM, stages `SimpleWall/{app,install.bat,RUNBOOK.md,acceptance.md}`, strips the x86 natives, and **refuses to zip** if a `config.json`, a log, or the x86 folder leaked in (verified: none do). `dist/` is gitignored, so the SCRIPT lives in `packaging/`, not `dist/` — the spike's script was lost to the ignore, this one isn't.
@@ -84,6 +84,15 @@ Both are also on the Task 15 acceptance checklist, so they get done there if not
 Task 7 notes: the trap was real and the plan's own sample code fell into it — `IsButtonRelease` ran before the address switch, swallowing `/brightness 0`. The fix is structural: the release guard now lives in `Trigger()`, which wraps only the valueless addresses; `/brightness` and `/contrast` never see it, because `0` is data there. Both structures were run against the tests to prove the guard bites.
 
 Task 9 notes: brightness/contrast are written to the **in-memory** `WallConfig` but never saved — one atomic file write per OSC packet, at ~100 packets/sec on a fader sweep, is not a thing to do. **Task 14 owes the actual persistence** (debounced, or at exit).
+
+## Session 5 (2026-07-19) — clip-looks, replacing the global
+
+- **Brightness/contrast moved from the wall to the clip (`9f46e59`).** There is no more global wall brightness — a look is now a property of the CLIP. Any trigger that plays a clip (Stream Deck, mouse, scheduler, boot default) brings it up at its own saved look, applied to the incoming layer **before** the swap, so there's no flash of the wrong look on the outgoing frame. Setting a look is just adjusting the fader while that clip is playing — "what you see is what's saved" (debounced, same pattern as the old global save). The sliders and Reset now disable when nothing is on the wall, since there's no clip to hold a look. Replacing a clip's file resets its look — a new file gets a fresh default, not the old file's tuning. A one-time migration, `ConfigMigration.SeedClipLooks`, seeds every existing clip from the old global value on first launch of this build, so the wall looks identical before and after — the global field itself is now vestigial. Design doc: `2026-07-19-clip-looks-design.md`.
+- **This also answered the operator's scheduler question for free.** They'd asked about a "play clip" scheduled event that carries its own brightness/contrast. Once look is a clip property, a scheduled play-clip already carries the clip's look — no new scheduler fields needed, no design owed.
+- **A review caught two real composition bugs** (the theme holds: every review finds one).
+  - `OscReplySender` was still reporting the now-frozen global `_config.Brightness/Contrast` on every `StateChanged` — so after the migration, Stream Deck fader feedback would show a neutral wall while the actual clip sat dimmed, permanently, on every wall the migration ran on. Fixed by adding `IWallEngine.CurrentBrightness/Contrast` (the on-screen clip's own look) and reading those instead.
+  - A failed config save followed immediately by a clip switch dropped the pending look edit: the slot-aware save baseline was reset to the new clip's state, so the still-unsaved divergence from the previous clip silently vanished instead of retrying. Fixed with a `_configDirty` flag that restores the event-driven retry; the decision of *when* to retry is delegated to the pure, testable `MainForm.PendingSaveAfter`, so the interesting logic is unit-tested even though the orchestration around it isn't (see Open threads).
+- **Fold calibration finalized.** The operator measured the corner-wall creases directly on the physical LED: LEFT fold ≈175px, RIGHT fold ≈1475px, on the 1664-wide canvas. Final authoring reference rendered at `dist/hotfix/calib5-folds-1664x256.mp4` — three faces (LEFT RETURN 0–175, FRONT FACE 175–1475, RIGHT RETURN 1475–1664), red keep-clear bands over each fold, and a tile ruler, so content authors can keep logos/faces out of the fold zones. This is a content-authoring aid, not app code — it does not touch the soak. **Still open:** the operator hasn't yet confirmed the fold lines line up with the physical creases on the wall itself.
 
 ## How to build and test (nothing builds on the Mac)
 
@@ -203,3 +212,4 @@ Crossfades/mixer (the hard cut solved the actual problem), saturation/gamma/hue,
 - `dist/simple-wall-spike.zip` (45MB) and `dist/prereq/` (169MB of .NET 4.8 + KB4474419) are gitignored, still on disk. The prereqs turned out unnecessary for this machine and can be deleted.
 - The spike still lives in `src/SimpleWall/Spike/`. **Task 9 deletes it.**
 - Two low-priority follow-ups from the session 4 wall trip: the title bar doesn't actually show the log-folder path — `MainForm.cs:111` hardcodes `"SimpleWall"`. And `RUNBOOK.md` still quotes the old (wrong) 1964 geometry; it should say "measure and set the real visible size" rather than any fixed number.
+- Session 5: the `_configDirty` retry orchestration inside `MainForm` (as opposed to the pure `PendingSaveAfter` it delegates to) has no instance-level test — the message-loop-coupled debounce can't be unit-tested in this harness. A reviewer flagged this as optional lock-in, not a blocker.
