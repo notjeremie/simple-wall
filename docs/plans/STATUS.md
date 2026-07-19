@@ -1,7 +1,7 @@
 # simple-wall — where things stand
 
-**Last updated:** 2026-07-17, session 3
-**Tests:** 195 passing, 0 failing (~22s — libvlc, thumbnail and OSC tests drive real playback and real sockets; +36 for logging, autostart and settings)
+**Last updated:** 2026-07-19, session 4
+**Tests:** 208 passing, 0 failing (~22s — libvlc, thumbnail and OSC tests drive real playback and real sockets; +13 for the default-clip and cover-fit features, plus a fix for a latent parallel-libvlc-init flake)
 **Branch:** `master` (user explicitly consented to committing straight to master)
 
 ## Read these first, in this order
@@ -29,9 +29,9 @@
 | 12 | OSC listener + reply | ✅ done — **proven end-to-end from the Mac over real UDP** |
 | 13 | Scheduler UI + one-second tick | ✅ done — **watched a real task fire on the VM** |
 | 14 | Settings, autostart, logging | ✅ done |
-| 15 | Packaging + Win7 acceptance | 📦 **package built & verified; acceptance is the wall trip (not yet run)** |
+| 15 | Packaging + Win7 acceptance | 🟢 **wall trip run 2026-07-19; every checklist item passed; sign-off pending only tonight's overnight soak** — results in `docs/plans/2026-07-16-acceptance.md` |
 
-**Next action: run the wall trip.** The deploy package and all its docs are built and verified on the VM; what remains is physical and only doable at the real Win7 wall over VNC. **Do not tag `v1.0` until the acceptance sign-off is recorded** — Task 15 Step 5 ties the tag to the filled-in results, and the wall is the only thing that proves the product.
+**Next action: check tomorrow that the overnight soak held, then merge `master` into `main` and tag `v1.0`.** `master` is at `bcef66e`, three commits ahead of the packaging commit `f1f1533` (`23be9bf` DXVA2 fix, `08a8ce2` default clip, `bcef66e` cover-fit). **Do not tag yet** — the soak (checklist item 13) is still running and is the last open item.
 
 **Task 15 packaging — done and committed:**
 - **`packaging/build-release-package.sh`** builds `dist/simple-wall.zip` (~45MB, 486 files, self-contained). It builds Release on the VM, stages `SimpleWall/{app,install.bat,RUNBOOK.md,acceptance.md}`, strips the x86 natives, and **refuses to zip** if a `config.json`, a log, or the x86 folder leaked in (verified: none do). `dist/` is gitignored, so the SCRIPT lives in `packaging/`, not `dist/` — the spike's script was lost to the ignore, this one isn't.
@@ -42,6 +42,22 @@
 **Verified headless (what the VM can prove):** Release builds clean; the packaged app is self-contained with its x64 natives; libvlc loads and plays on the VM (`LibVlcContractTests`, part of the 195); `install.bat`'s .NET parse and netsh syntax are valid. The self-elevation, the actual `netsh add`, and every item on the acceptance checklist need the real machine.
 
 **To rebuild the package:** `./packaging/build-release-package.sh` (needs the `wallvm` alias up).
+
+## Session 4 (2026-07-19) — the wall trip
+
+Everything below was found or verified ON the real Win7 wall PC unless noted otherwise — this is the trip Task 15 was waiting on.
+
+- **DXVA2 thumbnail crash — found and fixed (`23be9bf`).** Adding any clip crashed the app ~0.5s later: a native `0xc0000005` access violation inside `libdxva2_plugin.dll`, silent because a corrupted-state exception never reaches the managed crash handler. Root cause: `ThumbnailCache` built its LibVLC with `--vout=dummy` but nothing forced software decode, so on the real AMD Radeon libvlc took DXVA2 hardware decode and handed GPU surfaces to a dummy vout plus a CPU scene filter. Fixed by forcing `avcodec-hw=none` on the thumbnail instance. The GPU-less build VM software-decodes everything, so it could never have caught this — real-GPU paths are only provable at the wall. Confirmed via Windows Event Log / WER.
+
+- **REAL wall dimensions: 1664x256 — it's a wrapped CORNER wall.** The spike's "X=1920/W=1964/H=256" (session 1) was a mismeasurement: eyeballed "looks sharp", never checked with a pixel ruler, and it turns out to have been cropping the corner the whole time. Remeasured 2026-07-19 with pixel-ruler calibration clips: Windows reports the LED as an extended display `{X=1920, Y=0, 1920x1080}`, but the physical LED only lights the top-left 1664x256 of that canvas. A magenta-border fit-check kissed all four physical edges at 1664x256; cyan 128px lines matched the tile seams (13x2 tiles of 128px). Correct geometry is **X=1920, Y=0, W=1664, H=256** — set and persisted on the machine. The wall wrapping a corner is irrelevant to the app (still one 1664x256 canvas) but matters for whoever authors content.
+
+- **Two features added at the operator's request, both verified on the wall:**
+  - **Default clip (`08a8ce2`).** The app boots black by design (deliberately no catch-up in the scheduler), so an autostarted wall stayed dark after a power cut until the next scheduled task. Added a per-install default clip: grid right-click "Make this clip default" (gold star badge), `WallConfig.DefaultSlot`, played once from `MainForm.OnShown`. A stale default pointing at a removed/missing clip is a dark boot, not a silent fallback, and is logged. With autostart, the wall now recovers content after a power cut.
+  - **Live cover-fit (`bcef66e`).** Clips are authored at 1964x256 but the wall is 1664x256, so they letterboxed (black bars top/bottom). The engine now sets `MediaPlayer.CropGeometry` to the output's reduced aspect ratio ("13:2"), which crops the source centred and fills the panel — cover, not letterbox, no distortion. Any clip of any size now fills the wall live; no content re-authoring needed.
+
+- **Fixed a latent test-suite flake this surfaced:** `LibVlcContractTests` and `ThumbnailCacheTests` each initialize native libvlc and ran in parallel xunit collections; concurrent `libvlc_new` access-violates on the ARM64-emulated build VM. Both now share one non-parallel `LibVlc` collection.
+
+- **Acceptance results:** every interactive checklist item PASSED — launch, geometry/fit at 1664x256, loop, clip-switching (~178-363ms, the two-layer fast path firing), brightness/contrast live, OSC fires-once with grid highlight, scheduler fires plus master-disable, restart-restores-state after a force-kill. Item 6 (missing-clip red box) is optional and wasn't retested. Item 12 (autostart survives a reboot) is deferred to the next natural reboot — this is a production wall PC that's never rebooted on purpose, and autostart is registered and already test-proven. Item 13 (overnight soak) is running tonight, to be checked tomorrow.
 
 **Task 14 done — what shipped:**
 - `Logging/Log.cs`: the append log moved out of `Program` and grew a ~5MB roll (two files, ~10MB cap). A blocked roll (someone tailing over VNC) still writes the line — an oversized log is recoverable, a missing line is the evidence. Serialized so a crash landing mid-roll can't write into a file being renamed. 12 tests, including concurrent-writers-across-a-roll.
@@ -186,3 +202,4 @@ Crossfades/mixer (the hard cut solved the actual problem), saturation/gamma/hue,
 - ~~A **cross-process config race** is possible (autostart + a manual launch = two instances).~~ **Closed in Task 14:** a `Local\`-scoped single-instance mutex in `Program.Main` means the second instance shows "already running" and exits before it opens anything. `ConfigStore`'s `static _gate` still handles the in-process thread case.
 - `dist/simple-wall-spike.zip` (45MB) and `dist/prereq/` (169MB of .NET 4.8 + KB4474419) are gitignored, still on disk. The prereqs turned out unnecessary for this machine and can be deleted.
 - The spike still lives in `src/SimpleWall/Spike/`. **Task 9 deletes it.**
+- Two low-priority follow-ups from the session 4 wall trip: the title bar doesn't actually show the log-folder path — `MainForm.cs:111` hardcodes `"SimpleWall"`. And `RUNBOOK.md` still quotes the old (wrong) 1964 geometry; it should say "measure and set the real visible size" rather than any fixed number.
