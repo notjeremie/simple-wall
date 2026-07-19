@@ -139,6 +139,13 @@ namespace SimpleWall.UI
                 {
                     media.AddOption(":stop-time=" + StopTime);
 
+                    // Belt and braces with --avcodec-hw=none on the instance (see LibVlcOptions):
+                    // a media-level avcodec-hw IS honoured -- the wall proves it with
+                    // :avcodec-hw=dxva2 -- so even if the instance option were ever "simplified"
+                    // away, this keeps the DXVA2 plugin (libdxva2_plugin.dll, which 0xc0000005'd
+                    // on the real Radeon) out of the extraction path.
+                    media.AddOption(":avcodec-hw=none");
+
                     player.EndReached += (s, e) => finished.Set();
                     player.EncounteredError += (s, e) => finished.Set();
 
@@ -186,6 +193,41 @@ namespace SimpleWall.UI
         }
 
         /// <summary>
+        /// The instance options for the extraction-only LibVLC. Exposed and static so the fact
+        /// that matters most here can be pinned by a test rather than trusted to a comment:
+        /// <c>--avcodec-hw=none</c> MUST be present.
+        ///
+        /// --vout=dummy stops libvlc RENDERING on the GPU; it does NOT stop it DECODING on the
+        /// GPU. Without --avcodec-hw=none, on the real Win7 wall PC (AMD Radeon HD 7800) libvlc
+        /// loaded its DXVA2 hardware decoder and access-violated inside libdxva2_plugin.dll
+        /// (0xc0000005, offset 0x1cf3) ~0.5s after any clip was added -- a native corrupted-state
+        /// exception the managed handler never sees, so the wall died leaving no log line. The
+        /// GPU-less build VM software-decoded and never reproduced it, which is exactly why this
+        /// went unseen until the wall. Thumbnails are 160x90 and decode ~5 frames: software
+        /// decode is trivial and correct. The wall's OWN engine keeps DXVA2 -- it has a real
+        /// Direct3D vout to receive the hardware surfaces; this instance, with a dummy vout and
+        /// a CPU-side scene filter, must never hand GPU surfaces anywhere.
+        ///
+        /// The --video-filter=scene and --scene-* options MUST be instance-level. As per-media
+        /// options they are silently ignored -- the filter chain is never built and not one
+        /// frame comes out, with no error anywhere. Measured the hard way.
+        /// </summary>
+        public static string[] LibVlcOptions(string stagingDirectory) => new[]
+        {
+            "--no-audio",
+            "--vout=dummy",
+            "--avcodec-hw=none",
+            "--verbose=0",
+            "--video-filter=scene",
+            "--scene-format=png",
+            "--scene-prefix=t",
+            "--scene-path=" + stagingDirectory,
+            "--scene-ratio=1",
+            "--scene-width=" + Width,
+            "--scene-height=" + Height
+        };
+
+        /// <summary>
         /// Built on first use, on whatever background thread got here first, because constructing
         /// a LibVLC rescans every bundled plugin (this package ships no plugin cache) and that can
         /// take seconds on a slow disk. Doing it in the constructor would put those seconds
@@ -204,20 +246,7 @@ namespace SimpleWall.UI
                 Directory.CreateDirectory(_stagingDirectory);
                 Core.Initialize();
 
-                // These MUST be instance-level. As per-media options (":video-filter=scene") they
-                // are silently ignored -- the filter chain is never built and not one frame comes
-                // out, with no error anywhere. Measured the hard way.
-                _libVlc = new LibVLC(
-                    "--no-audio",
-                    "--vout=dummy",
-                    "--verbose=0",
-                    "--video-filter=scene",
-                    "--scene-format=png",
-                    "--scene-prefix=t",
-                    "--scene-path=" + _stagingDirectory,
-                    "--scene-ratio=1",
-                    "--scene-width=" + Width,
-                    "--scene-height=" + Height);
+                _libVlc = new LibVLC(LibVlcOptions(_stagingDirectory));
 
                 return _libVlc;
             }

@@ -1,8 +1,10 @@
 using System;
 using System.Diagnostics;
+using System.IO;
 using System.Threading;
 using LibVLCSharp.Shared;
 using SimpleWall.Engine;
+using SimpleWall.UI;
 using Xunit;
 
 namespace SimpleWall.Tests
@@ -36,6 +38,26 @@ namespace SimpleWall.Tests
         public void ProductionLibVlcOptionsAreAllAccepted()
         {
             using (var vlc = new LibVLC(VlcOptions.LibVlc()))
+            {
+                Assert.False(string.IsNullOrEmpty(vlc.Version));
+            }
+        }
+
+        /// <summary>
+        /// The thumbnail cache's extraction instance carries --avcodec-hw=none, the fix for the
+        /// libdxva2_plugin.dll 0xc0000005 crash on the real wall PC (--vout=dummy stops GPU
+        /// rendering but not GPU decoding). Pin two things a GPU-less VM CAN check: the option
+        /// is actually present, and libvlc accepts it (an unknown instance option is FATAL --
+        /// libvlc_new returns NULL -- so a typo here would be a dead thumbnail path, not a
+        /// slower one). The crash itself only reproduces on real AMD hardware.
+        /// </summary>
+        [Fact]
+        public void ThumbnailLibVlcForcesSoftwareDecodeAndIsAccepted()
+        {
+            var options = ThumbnailCache.LibVlcOptions(Path.GetTempPath());
+            Assert.Contains("--avcodec-hw=none", options);
+
+            using (var vlc = new LibVLC(options))
             {
                 Assert.False(string.IsNullOrEmpty(vlc.Version));
             }
