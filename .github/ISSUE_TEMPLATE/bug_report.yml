@@ -1,0 +1,72 @@
+name: Bug report
+description: Something is broken or behaving unexpectedly.
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did SimpleWall actually do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-expected
+    attributes:
+      label: What you expected
+      description: What should have happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro-steps
+    attributes:
+      label: Steps to reproduce
+      description: As exact as you can make them. If it's intermittent, say so and describe how often.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: input
+    id: windows-version
+    attributes:
+      label: Windows version
+      description: e.g. Windows 7 SP1, Windows 10 22H2, Windows 11 23H2
+      placeholder: Windows 7 SP1
+    validations:
+      required: true
+
+  - type: textarea
+    id: wall-setup
+    attributes:
+      label: How the wall is connected
+      description: Extended display or mirrored? What resolution and position is the output window configured for?
+      placeholder: |
+        Extended display, output window at 1920,0, 1664x256
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Relevant lines from simple-wall.log
+      description: >
+        The log lives next to the .exe, or at %LOCALAPPDATA%\simple-wall\ if that
+        location isn't writable — the exact path in use is shown in the app's
+        title bar. Paste the lines from around when the problem happened, not
+        the whole file.
+      render: text
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: SimpleWall version or commit
+      description: The release tag if you're on a build, or the git commit hash if you built it yourself.
+      placeholder: v1.0 or 9f46e59
+    validations:
+      required: true

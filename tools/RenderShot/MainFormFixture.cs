@@ -31,7 +31,7 @@ namespace RenderShot
             var library = new ClipLibrary(config.Clips);
             library.Add(real);                                    // slot 1
             library.Add(real);                                    // slot 2 -- shown playing below
-            library.Add(@"V:\VIZRT\INSIDE_WALL\WALL_BEFORE_SUNSET_1964X256.mp4"); // slot 3 -- missing
+            library.Add(@"D:\clips\missing-clip.mp4"); // slot 3 -- missing
             library.Add(real);                                    // slot 4
 
             // The playing clip carries a non-neutral look, so the render proves the sliders read

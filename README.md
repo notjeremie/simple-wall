@@ -1,63 +1,76 @@
 # SimpleWall
 
-Video wall playout for a **1664×256 three-face corner LED wall** in a television
-newsroom. Sixteen clips on screen as tiles, one click or one Stream Deck button
-to put any of them on the wall, a scheduler for the ones that should change
-themselves, and no visible black frame when a clip changes.
+Playout for video walls, LED strips and signage displays on Windows. Put clips
+on a screen as tiles, click one — or hit a Stream Deck button — and it goes on
+the wall with no visible black frame between clips.
 
-Running in production at i24NEWS on a Windows 7 PC.
+Built for a newsroom LED wall that had to be driven by someone who is not a
+video engineer, on a PC that could not be babied.
+
+- **16 clip slots**, triggered by mouse, Stream Deck (OSC over UDP), a
+  scheduler, or the boot default
+- **Invisible clip changes** — measured 165–471 ms swaps with no black frame
+- **Per-clip brightness/contrast**, remembered per clip rather than per wall
+- **Scheduler** — weekly on any set of weekdays, or a one-off date
+- **Unattended operation** — autostart, boot-into-a-default-clip, atomic config
+  writes, log rolling, and a clock-jump guard
+
+**Windows only** (.NET Framework 4.8 + LibVLC). Runs on Windows 7 and later.
+
+→ **[Getting started](docs/GETTING-STARTED.md)** · **[Configuration](docs/CONFIGURATION.md)** · **[Operator runbook](docs/RUNBOOK.md)**
+
+## Is this for you?
+
+SimpleWall is deliberately small. It does one thing: reliably put one of N video
+files on one of your displays, and let something external decide which.
+
+It's a good fit if you have a display that isn't a desktop — an LED wall, a
+lobby screen, a strip above a set, a shop window — and you want a handful of
+loops that an operator switches between or that change on a schedule.
+
+It is **not** a media server, a playlist system, or a compositor. No transitions,
+no layering, no audio mixing, no network sync between machines. If you need
+those, look at CasparCG or OBS.
+
+## How it works
+
+Your display is set up as an **extended** desktop (not mirrored). SimpleWall
+puts a borderless window exactly over that display's region and plays video into
+it. The main window — the tiles, the faders, the scheduler — stays on your
+normal monitor.
 
 ```
-┌─────────┬───────────────────────────────────────────────┬────────┐
-│  LEFT   │                 FRONT FACE                    │ RIGHT  │
-│ RETURN  │            191–1440 · safe zone                │ RETURN │
-│  191px  │                  1249px                        │ 224px  │
-└─────────┴───────────────────────────────────────────────┴────────┘
-   0     191                                            1440    1664
+   your monitor                    the wall (extended display)
+┌──────────────────┐          ┌──────────────────────────────┐
+│ ▣ ▣ ▣ ▣  tiles   │          │                              │
+│ ▣ ▣ ▣ ▣          │  ──────▶ │      borderless output       │
+│ ── ── faders     │          │                              │
+└──────────────────┘          └──────────────────────────────┘
+     control                      whatever you configured
 ```
 
-The wall is a single flat 1664×256 canvas that physically folds at two
-90° creases. Content is authored against the full width, but anything that
-must stay readable — a logo, a face — lives inside the front face.
+Any resolution and position works — configure it once and it's remembered.
 
-## What it does
+### The swap
 
-- **16 clip slots**, each a tile with a thumbnail. Triggered by mouse, Stream
-  Deck (OSC over UDP), the scheduler, or the boot default.
-- **Invisible clip changes.** Swaps measured at 165–471 ms on the hardware with
-  no black frame — see [below](#the-swap).
-- **Per-clip looks.** Brightness and contrast belong to the *clip*, not to the
-  wall. Every trigger brings a clip up at its own saved look, applied to the
-  incoming layer *before* the swap, so the outgoing frame never flashes wrong.
-- **Scheduler.** Weekly recurrence on any subset of weekdays, or a one-off date.
-  A scheduled event can play a clip, play/pause/stop, or set a look.
-- **Replace a clip in place**, keeping its slot number — and therefore its
-  Stream Deck mapping — while the file behind it changes.
-- **Survives the newsroom.** Single-instance, autostart, atomic config writes
-  with corrupt-file quarantine, a log that rolls at ~5 MB, and a clock-jump
-  guard on the scheduler.
-
-## The swap
-
-The naive approach — stop the player, load the next file, start it — showed a
+The obvious approach — stop the player, load the next file, start it — showed a
 measured ~290 ms of black on this hardware. On a wall behind a live news set,
 that reads as a fault.
 
-So there are two `MediaPlayer`s driving two stacked `VideoView`s in one
-borderless output window. The front layer keeps playing while the next clip
-loads onto the hidden back layer. A 15 ms poll waits up to a second for the back
-player to report an actual decoded picture, and only then does the z-order flip
-and the outgoing player stop. The cut becomes invisible because nothing is ever
-not-playing.
+So there are two players driving two stacked video surfaces in one output
+window. The front layer keeps playing while the next clip loads onto the hidden
+back layer. A 15 ms poll waits up to a second for the back player to report an
+actual decoded picture, and only then does the z-order flip and the outgoing
+player stop. The cut is invisible because nothing is ever not-playing.
 
 Core of it: [`VlcWallEngine.StartLoad`](src/SimpleWall/Engine/VlcWallEngine.cs)
 and `CompleteSwap`, with the wait/give-up decision isolated in `SwapPolicy` so
-it can be unit-tested without a video card.
+it's unit-tested without a video card.
 
 ## Remote control (OSC)
 
 Listens on UDP **7000** by default. Built for a Stream Deck, but anything that
-speaks OSC works.
+speaks OSC works — Companion, TouchOSC, a Python script.
 
 | Address | Effect |
 |---|---|
@@ -67,32 +80,33 @@ speaks OSC works.
 | `/contrast <0..2>` | Set the current clip's contrast |
 
 A trigger arriving with a leading `0` argument is treated as a button *release*
-and ignored, so a Stream Deck press doesn't fire twice.
+and ignored, so one Stream Deck press doesn't fire twice.
 
-State feedback is sent back on `/state/slot`, `/state/playing`,
-`/state/brightness` and `/state/contrast` on every state change — so the faders
-on the Stream Deck follow the wall, including when someone changes it by mouse.
-Replies go to `OscReplyHost`/`OscReplyPort` (default 9000), disabled until a
-host is set.
+State is sent back on `/state/slot`, `/state/playing`, `/state/brightness` and
+`/state/contrast` on every change — so your controller's faders follow the wall
+even when someone changes it by mouse. See
+[Configuration](docs/CONFIGURATION.md#osc) to enable replies.
+
+## Install
+
+Grab a [release](../../releases), unzip, run `install.bat`. It checks for
+.NET Framework 4.8 and drops the app in place.
+
+Or build it yourself — see [Getting started](docs/GETTING-STARTED.md).
 
 ## Build
 
 **Windows only.** .NET Framework 4.8 WinForms, x64, with native LibVLC binaries.
-It does not build or run on macOS or Linux — the target machine is a Windows 7
-PC, and that constraint shapes the whole project.
-
-Needs .NET SDK 8.0.423 (pinned in `global.json`).
+It does not build or run on macOS or Linux. Needs .NET SDK 8.0.423 (pinned in
+`global.json`).
 
 ```sh
-dotnet build          # from the repo root, builds the .sln
+dotnet build          # from the repo root
 dotnet test           # 229 tests
 ```
 
-Main dependencies: `LibVLCSharp` 3.8.2 + `VideoLAN.LibVLC.Windows` 3.0.21,
+Dependencies: `LibVLCSharp` 3.8.2 + `VideoLAN.LibVLC.Windows` 3.0.21,
 `Rug.Osc`, `Newtonsoft.Json`, xunit.
-
-`packaging/build-release-package.sh` produces the deployable zip;
-`packaging/install.bat` is what runs on the wall PC.
 
 ## Layout
 
@@ -105,41 +119,64 @@ src/SimpleWall/
   UI/              MainForm, OutputWindow, ClipBox, SchedulerTab, SettingsTab
   Logging/         Log, LogPaths
   Infrastructure/  Autostart (HKCU Run key)
-  Program.cs       composition root
 tests/             229 tests, xunit
 tools/RenderShot/  renders any WinForms Form to a PNG over SSH, headless
 tools/calib/       LED wall calibration pattern generators
-docs/plans/        design docs, STATUS.md is the real handoff
-docs/RUNBOOK.md    for whoever is at the wall PC
+docs/plans/        design history — a record of how this was built, not a spec
 ```
-
-Config lives next to the executable as `config.json` (falling back to
-`%LOCALAPPDATA%\simple-wall\` then the Desktop — first writable location wins).
-Writes are temp-file-then-atomic-replace; a corrupt config is quarantined to
-`config.json.bad-<timestamp>` rather than silently overwritten.
 
 ## Testing without the hardware
 
-The interesting problem in this project was that the target is a Windows 7 PC
-reachable only by VNC, with no debugger and no fast feedback loop. Two tools
-exist to close that gap:
+The constraint that shaped this project: the target machine was reachable only
+by VNC, with no debugger and a feedback loop measured in hours. Two tools exist
+to close that gap, and they may be useful in your own projects:
 
 - **`tools/RenderShot`** renders any WinForms form to a PNG over SSH with no
   desktop session, so UI states can be *looked at* from a build VM instead of
   reasoned about.
-- **`LibVlcContractTests`** run real libvlc with `--vout=dummy`, which turns out
-  to give genuine playback behaviour with no video card — so the player boundary
-  is tested rather than mocked.
+- **`LibVlcContractTests`** run real libvlc with `--vout=dummy`, which gives
+  genuine playback behaviour with no video card — so the player boundary is
+  tested rather than mocked.
 
-`tools/calib/` generates the LED calibration patterns: a fit-check/ruler sheet
-for the graphics department, and a fold-verification pattern for re-checking
-that the creases still land where they're documented.
+**`tools/calib/`** generates LED calibration patterns — a fit-check ruler sheet
+and a fold-verification pattern. If your wall is a single flat panel you won't
+need these; if it bends around a corner, they'll save you an afternoon.
+
+## Corner and folded walls
+
+The wall this was built for is 1664×256 and folds at two 90° creases, so it
+presents three faces to the room:
+
+```
+┌─────────┬───────────────────────────────────────────────┬────────┐
+│  LEFT   │                 FRONT FACE                    │ RIGHT  │
+│ RETURN  │                  safe zone                    │ RETURN │
+└─────────┴───────────────────────────────────────────────┴────────┘
+   0     191                                            1440    1664
+```
+
+The canvas is flat and SimpleWall doesn't know or care about the folds — but
+your *content* does. Anything that must stay readable (a logo, a face) has to
+sit inside the front face, because the returns are viewed at a sharp angle.
+`tools/calib/` generates the patterns for finding your crease positions and
+handing the safe zone to whoever authors the content.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Be warned that meaningful changes to the
+playout path are hard to verify without a physical wall — the testing notes
+above explain how far you can get without one.
 
 ## Status
 
-Tagged [`v1.0`](../../releases/tag/v1.0). Verified on the real wall: 18h29m of
-continuous uptime under production use, 5/5 scheduler events on time including
-one firing after an 8-hour idle gap, zero errors, and no swap-latency drift.
+Tagged [`v1.0`](../../releases/tag/v1.0) and running in production on a
+newsroom LED wall. Verified on that hardware: 18h29m of continuous uptime under
+real use, 5/5 scheduler events on time including one firing after an 8-hour idle
+gap, zero errors, no swap-latency drift.
 
-`docs/plans/STATUS.md` is the honest running account — what's done, what's
+`docs/plans/STATUS.md` is the honest running account of what's done, what's been
 verified on hardware versus only unit-tested, and what's still owed.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

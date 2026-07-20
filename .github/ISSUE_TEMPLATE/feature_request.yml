@@ -1,0 +1,32 @@
+name: Feature request
+description: Ask for something SimpleWall doesn't do yet.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem you're trying to solve
+      description: >
+        Describe what you're trying to accomplish, not the feature you think
+        would solve it — there may be a simpler way to get there than the one
+        you have in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: What you do today
+      description: How are you working around this right now, if at all?
+    validations:
+      required: false
+
+  - type: textarea
+    id: setup
+    attributes:
+      label: Your setup
+      description: Wall size (or display type), and how you trigger clips (mouse, Stream Deck/OSC, scheduler).
+      placeholder: |
+        1664x256 corner wall, triggered mostly by Stream Deck
+    validations:
+      required: true

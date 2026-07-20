@@ -1,5 +1,13 @@
 # SimpleWall — deployment RUNBOOK
 
+> **This is a worked example, not a generic guide.** It's the actual runbook used
+> to deploy SimpleWall to an unattended Windows 7 wall PC reachable only by VNC.
+> Specific paths, dates and geometry below are from that rollout — substitute
+> your own. It's kept in the repo because the *shape* of it transfers: check the
+> clock, confirm the runtime, land the output window, then verify unattended
+> recovery. If you just want to get running, start with
+> [Getting started](GETTING-STARTED.md) instead.
+
 For whoever is at the wall PC (over VNC or in person). This is the real
 deployment, not the spike. Follow the numbered steps in order. Where a step
 says **record**, write what you saw into `acceptance.md` — that file is the
@@ -93,9 +101,9 @@ complete, valid (if unwelcome) result.
 ## 6. Put the output window on the LED strip
 
 Go to the **Settings** tab. Under **Output window**, the fields should already
-hold the wall geometry (**X=1920, Y=0, W=1964, H=256** is the measured-good
-setting — W deliberately exceeds the 1920 panel so the wall is pixel-1:1 and
-sharp; do **not** clamp it to 1920). Adjust X/Y/W/H until the output window
+hold the wall geometry (**X=1920, Y=0, W=1664, H=256** was the final measured
+setting for this wall — an earlier W=1964 turned out to be a mismeasurement;
+trust the ruler on the panel, not the spec sheet). Adjust X/Y/W/H until the output window
 covers the physical strip exactly, with no visible window chrome. Changes apply
 live. **Reset output window** puts it back on the wall at the default if it ever
 ends up lost on the desktop.
@@ -104,8 +112,7 @@ ends up lost on the desktop.
 
 ## 7. Add the clips
 
-On the **Clips** tab, drag the wall's `.mp4` files in (they live at
-`V:\VIZRT\INSIDE_WALL\`), or press **+**. Assign them to slots to match the
+On the **Clips** tab, drag the wall's `.mp4` files in (on this deployment they lived on a mapped media share), or press **+**. Assign them to slots to match the
 Stream Deck buttons. A clip whose file is missing shows a red box — that's the
 app telling you the path is wrong, not a bug.
 
@@ -114,11 +121,12 @@ app telling you the path is wrong, not a bug.
 Everything below is on the **LED panel**, not the desktop preview. Record each
 in `acceptance.md`.
 
-- [ ] A 1964×256 clip **loops seamlessly** — no stutter, no tear, no seam at the
+- [ ] A full-size clip **loops seamlessly** — no stutter, no tear, no seam at the
   loop point.
-- [ ] **Clip switching** is acceptable; the black frame at the cut matches the
-  spike's ~290ms measurement (it is not zero — nothing holds the wall during a
-  reload; expect up to one frame of black at the cut).
+- [ ] **Clip switching shows no black frame.** The double-buffered swap loads the
+  next clip on a hidden layer and flips z-order only once it has a picture, so
+  the cut should be invisible. (Pre-1.0 builds reloaded a single player and showed
+  ~290ms of black — if you see that, you are running an old build.)
 - [ ] **Brightness/contrast** apply live and look right *on the LED panel* —
   drag each slider, confirm the wall follows with no stutter, then Reset.
 - [ ] **Missing clip** ⇒ red box, wall unaffected (remove a file or point a slot
@@ -150,9 +158,9 @@ re-tick — that means an older copy is registered.)
 - [ ] **Leave it running overnight** ⇒ still playing in the morning, log clean,
   memory not climbing. This is the only test for slow leaks, and this machine is
   expected to run for months.
-- The 22-day `EndReached` restart is not seamless (nothing holds the wall while
-  it reloads). Expect ~290ms of black once every ~22 days. Nothing to do — just
-  know it's expected, not a fault.
+- The long-running `EndReached` restart (~22 days) goes through the same
+  double-buffered path as any other load, so it should be invisible too. Worth
+  confirming if your wall runs for months without a restart.
 
 ## 11. Bring back
 
