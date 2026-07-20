@@ -1,19 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
-<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
-  <assemblyIdentity version="1.0.0.0" name="SimpleWall.app" />
+<!--
+  CAUTION: a double hyphen is ILLEGAL inside an XML comment. The C# in this repo uses a
+  double hyphen as a dash freely; do NOT carry that habit into this file. A malformed
+  manifest is rejected by Windows at process start with "the application has failed to
+  start because its side-by-side configuration is incorrect", before any of our code
+  runs, so nothing is logged and the message names no cause. That shipped once
+  (2026-07-20) and blocked launch on Win10. ManifestTests now guards it.
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity version="1.0.0.0" name="SimpleWall.app" type="win32" />
 
   <!--
-    supportedOS is not decoration: Windows only grants per-monitor DPI awareness to a
+    supportedOS is not decoration. Windows only grants per-monitor DPI awareness to a
     process that declares Windows 10 compatibility here. Omit the Win10 GUID and the
-    dpiAwareness element below is silently ignored, leaving the app DPI-unaware with
-    no error anywhere -- the exact failure this manifest exists to prevent.
+    dpiAwareness element below is silently ignored, leaving the app DPI-unaware with no
+    error anywhere: the exact failure this manifest exists to prevent.
   -->
   <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
     <application>
       <supportedOS Id="{35138b9a-5d96-4fbd-8e2d-a2440225f93a}" /><!-- Windows 7 -->
       <supportedOS Id="{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}" /><!-- Windows 8 -->
       <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}" /><!-- Windows 8.1 -->
-      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" /><!-- Windows 10/11 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" /><!-- Windows 10 and 11 -->
     </application>
   </compatibility>
 
@@ -22,22 +30,22 @@
       <!--
         Why the app must be DPI-aware at all: the output window is positioned by exact
         pixel coordinates onto an LED wall. A DPI-unaware process gets VIRTUALIZED
-        coordinates from Windows -- Screen.AllScreens lies, the window is placed in a
-        fake coordinate space, and Windows then bitmap-stretches the result. On a
-        display scaled to 125% the wall output lands in the wrong place at the wrong
-        size and the video is no longer 1:1, which on an LED panel reads as soft.
-        The Win7 wall PC runs at 100% where unaware and aware are identical, so this
-        was invisible until Win10 machines entered the picture.
+        coordinates from Windows, so Screen.AllScreens lies, the window is placed in a
+        fake coordinate space, and Windows then bitmap-stretches the result. On a display
+        scaled to 125% the wall output lands in the wrong place at the wrong size and the
+        video is no longer 1:1, which on an LED panel reads as soft. The Win7 wall PC runs
+        at 100%, where unaware and aware are identical, so this stayed invisible until
+        Win10 machines entered the picture.
 
-        PerMonitorV2 rather than plain system awareness: with system awareness the
-        process only gets true pixels at the PRIMARY monitor's DPI, and Windows
-        bitmap-scales windows on any monitor whose DPI differs. That is precisely the
-        wall. PerMonitorV2 disables that stretching everywhere and hands the app real
-        physical pixels on every display.
+        PerMonitorV2 rather than plain system awareness: with system awareness the process
+        only gets true pixels at the PRIMARY monitor's DPI, and Windows bitmap-scales
+        windows on any monitor whose DPI differs. That is precisely the wall. PerMonitorV2
+        disables that stretching everywhere and hands the app real physical pixels on
+        every display.
 
         Both elements are present on purpose. Windows 7 and 8 do not understand
-        dpiAwareness and read dpiAware instead, falling back to system awareness --
-        which on a 100% display is exactly today's behaviour.
+        dpiAwareness and read dpiAware instead, falling back to system awareness, which on
+        a 100% display is exactly today's behaviour.
       -->
       <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true</dpiAware>
       <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2,PerMonitor</dpiAwareness>
