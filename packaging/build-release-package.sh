@@ -11,6 +11,14 @@ REL="$REPO/src/SimpleWall/bin/Release/net48"
 
 cd "$REPO"
 
+# Wipe the Release output before building. Incremental builds over the SMB share
+# accumulate: stale files from older builds are never removed, and macOS collision
+# renaming leaves "SimpleWall.exe 2.config"-style duplicates behind. Left alone this
+# silently doubled the package (1168 files / 97MB against the expected ~45MB) and
+# shipped junk to the wall PC. The build is ~10s from cold; correctness is worth it.
+echo "==> Cleaning Release output"
+rm -rf "$REPO/src/SimpleWall/bin/Release" "$REPO/src/SimpleWall/obj/Release"
+
 echo "==> Building Release in the VM"
 ssh wallvm 'cmd /c "pushd \\Mac\Home\Documents\Coding\simple-wall && dotnet build -c Release src\SimpleWall\SimpleWall.csproj -clp:ErrorsOnly"' 2>&1 | tail -4
 
