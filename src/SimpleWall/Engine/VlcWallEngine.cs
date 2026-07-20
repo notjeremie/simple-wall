@@ -100,7 +100,7 @@ namespace SimpleWall.Engine
                 _playerA.EncounteredError += (s, e) => OnEncounteredError(true);
                 _playerB.EncounteredError += (s, e) => OnEncounteredError(false);
 
-                _outputWindow = new OutputWindow(_playerA, _playerB);
+                _outputWindow = new OutputWindow(_playerA, _playerB, _log);
                 ApplyGeometry();
 
                 // No clip is loaded yet, so both layers start neutral. Each clip's own look is
