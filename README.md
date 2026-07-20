@@ -7,7 +7,7 @@ the wall with no visible black frame between clips.
 Built for a newsroom LED wall that had to be driven by someone who is not a
 video engineer, on a PC that could not be babied.
 
-- **16 clip slots**, triggered by mouse, Stream Deck (OSC over UDP), a
+- **Up to 50 clip slots**, triggered by mouse, Stream Deck (OSC over UDP), a
   scheduler, or the boot default
 - **Invisible clip changes** — measured 165–471 ms swaps with no black frame
 - **Per-clip brightness/contrast**, remembered per clip rather than per wall
@@ -139,27 +139,8 @@ to close that gap, and they may be useful in your own projects:
   tested rather than mocked.
 
 **`tools/calib/`** generates LED calibration patterns — a fit-check ruler sheet
-and a fold-verification pattern. If your wall is a single flat panel you won't
-need these; if it bends around a corner, they'll save you an afternoon.
-
-## Corner and folded walls
-
-The wall this was built for is 1664×256 and folds at two 90° creases, so it
-presents three faces to the room:
-
-```
-┌─────────┬───────────────────────────────────────────────┬────────┐
-│  LEFT   │                 FRONT FACE                    │ RIGHT  │
-│ RETURN  │                  safe zone                    │ RETURN │
-└─────────┴───────────────────────────────────────────────┴────────┘
-   0     191                                            1440    1664
-```
-
-The canvas is flat and SimpleWall doesn't know or care about the folds — but
-your *content* does. Anything that must stay readable (a logo, a face) has to
-sit inside the front face, because the returns are viewed at a sharp angle.
-`tools/calib/` generates the patterns for finding your crease positions and
-handing the safe zone to whoever authors the content.
+for confirming your output lands pixel-exact, and a fold-verification pattern for
+walls that bend around a corner. See [`tools/calib/`](tools/calib/) if that's you.
 
 ## Contributing
 
