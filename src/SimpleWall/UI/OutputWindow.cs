@@ -40,6 +40,15 @@ namespace SimpleWall.UI
             FormBorderStyle = FormBorderStyle.None;
             TopMost = true;
             StartPosition = FormStartPosition.Manual;
+
+            // Never let WinForms resize this window for us. With per-monitor DPI awareness
+            // (see app.manifest) a form is rescaled when it lands on a monitor with a
+            // different DPI -- which is exactly what this window does, every launch, moving
+            // from the operator's desktop onto the wall. Autoscaling would multiply the
+            // geometry the operator typed into Settings by a DPI ratio and quietly land the
+            // output at the wrong size. SetGeometry is the ONLY thing that decides these
+            // bounds; they are physical pixels and must survive untouched.
+            AutoScaleMode = AutoScaleMode.None;
             ShowInTaskbar = false;
             BackColor = Color.Black;
             Text = "SimpleWall output";

@@ -1,8 +1,8 @@
 # simple-wall — where things stand
 
-**Last updated:** 2026-07-19, session 5
+**Last updated:** 2026-07-20, session 6
 **Tests:** 229 passing, 0 failing (+21 this session — per-clip look defaults, Replace-resets-look, `ConfigMigration` seeding, slot-aware `ClassifyLookChange`, `PendingSaveAfter` retry, and the OSC-reply-reads-clip-look regression test)
-**Branch:** `master` (user explicitly consented to committing straight to master)
+**Branch:** `main` (renamed from `master` when the repo was published; user explicitly consented to committing straight to it)
 
 ## Read these first, in this order
 
@@ -84,6 +84,16 @@ Both are also on the Task 15 acceptance checklist, so they get done there if not
 Task 7 notes: the trap was real and the plan's own sample code fell into it — `IsButtonRelease` ran before the address switch, swallowing `/brightness 0`. The fix is structural: the release guard now lives in `Trigger()`, which wraps only the valueless addresses; `/brightness` and `/contrast` never see it, because `0` is data there. Both structures were run against the tests to prove the guard bites.
 
 Task 9 notes: brightness/contrast are written to the **in-memory** `WallConfig` but never saved — one atomic file write per OSC packet, at ~100 packets/sec on a fader sweep, is not a thing to do. **Task 14 owes the actual persistence** (debounced, or at exit).
+
+## Session 6 (2026-07-20) — v1.0 shipped, public, and per-monitor DPI
+
+- **v1.0 tagged and the repo published.** `github.com/notjeremie/simple-wall`, MIT, default branch `main`. The README/docs were rewritten to present a **generic** tool (any wall, any size) rather than this one — i24-specific material stays in Notion. Fold geometry was finalised at **191/1440** and the GFX handoff sheet is `dist/hotfix/calib8-gfx-1664x256.mp4`; the generators are now tracked in `tools/calib/` instead of living in temp dirs.
+- **Per-monitor DPI awareness added — the blocker for the two new Win10 machines.** The app was fully DPI-*unaware*: no manifest, no `app.config`, no `SetProcessDPIAware`. Windows therefore virtualised its coordinates, so `Screen.AllScreens` lies and the output window is bitmap-stretched. Invisible on the Win7 wall because that machine runs at 100% scaling, where aware and unaware are identical — and a guaranteed defect on any Win10 box at 125%/150%, where the wall output would land in the wrong place at the wrong size and no longer be 1:1.
+  - `src/SimpleWall/app.manifest` declares `PerMonitorV2,PerMonitor` plus `dpiAware=true`, and — critically — the **Windows 10 `supportedOS` GUID**, without which Windows silently ignores the whole `dpiAwareness` element.
+  - `src/SimpleWall/App.config` opts WinForms itself into `PerMonitorV2`. The manifest alone leaves the *process* aware but the *controls* unresponsive to DPI changes; both switches are needed.
+  - `OutputWindow` now sets `AutoScaleMode.None`. Under per-monitor awareness WinForms rescales a form when it crosses onto a different-DPI monitor — which this window does every launch, moving from the operator's desktop onto the wall. Autoscaling would multiply the operator's typed geometry by a DPI ratio. `SetGeometry` must remain the only thing deciding those bounds.
+  - Chose PerMonitorV2 over plain system awareness deliberately: system awareness only gives true pixels at the *primary* monitor's DPI and bitmap-scales everything else — and "everything else" is precisely the wall.
+- **Verified:** builds clean (0 warnings), 229/229 tests pass, the manifest is confirmed *embedded* in `SimpleWall.exe` (the Win10 GUID and `PerMonitorV2` are present in the binary), and `SimpleWall.exe.config` carries the WinForms opt-in. **Not verified: actual behaviour on a scaled display.** That needs a Windows machine set to 125%/150% and cannot be proven from the Mac or from a headless VM — see Open threads.
 
 ## Session 5 (2026-07-19) — clip-looks, replacing the global
 

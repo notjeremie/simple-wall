@@ -6,6 +6,8 @@
     <PlatformTarget>x64</PlatformTarget>
     <LangVersion>latest</LangVersion>
     <AssemblyName>SimpleWall</AssemblyName>
+    <!-- Per-monitor DPI awareness. See app.manifest for why this is not optional. -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
