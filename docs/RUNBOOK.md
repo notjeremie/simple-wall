@@ -123,10 +123,11 @@ in `acceptance.md`.
 
 - [ ] A full-size clip **loops seamlessly** — no stutter, no tear, no seam at the
   loop point.
-- [ ] **Clip switching shows no black frame.** The double-buffered swap loads the
-  next clip on a hidden layer and flips z-order only once it has a picture, so
-  the cut should be invisible. (Pre-1.0 builds reloaded a single player and showed
-  ~290ms of black — if you see that, you are running an old build.)
+- [ ] **Clip switching** — note the black frame at the cut. The two-layer swap
+  loads the next clip on a hidden layer and flips once it reports a video output,
+  which reduces the flash but on the tested GPUs does NOT eliminate it: expect
+  roughly the clip's load time (~300–460ms) of black at the cut. This is a known
+  limitation, not a fault of your setup. **Record the duration you see.**
 - [ ] **Brightness/contrast** apply live and look right *on the LED panel* —
   drag each slider, confirm the wall follows with no stutter, then Reset.
 - [ ] **Missing clip** ⇒ red box, wall unaffected (remove a file or point a slot

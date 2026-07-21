@@ -9,7 +9,7 @@ video engineer, on a PC that could not be babied.
 
 - **Up to 50 clip slots**, triggered by mouse, Stream Deck (OSC over UDP), a
   scheduler, or the boot default
-- **Invisible clip changes** — measured 165–471 ms swaps with no black frame
+- **Reduced-flash clip changes** — a two-layer swap that minimizes (but on some GPUs does not fully eliminate) the black frame at a cut; see [caveat](#a-caveat-on-the-swap)
 - **Per-clip brightness/contrast**, remembered per clip rather than per wall
 - **Scheduler** — weekly on any set of weekdays, or a one-off date
 - **Unattended operation** — autostart, boot-into-a-default-clip, atomic config
@@ -59,9 +59,20 @@ that reads as a fault.
 
 So there are two players driving two stacked video surfaces in one output
 window. The front layer keeps playing while the next clip loads onto the hidden
-back layer. A 15 ms poll waits up to a second for the back player to report an
-actual decoded picture, and only then does the z-order flip and the outgoing
-player stop. The cut is invisible because nothing is ever not-playing.
+back layer. A 15 ms poll waits up to a second for the back player to report a
+video output, and only then does the z-order flip and the outgoing player stop.
+
+#### A caveat on the swap
+
+This design *assumes the hidden back layer renders while it is occluded*, so the
+flip is instant. On the GPUs tested so far that assumption only partly holds:
+the back layer's video output is created (which is what the poll detects) but the
+first frame is not painted until the layer is brought to the front, so a cut
+still shows roughly the clip's load time — about 300–460 ms — of black. The
+two-layer approach **reduces** the flash versus a naive stop-load-play, but does
+not reliably eliminate it on this hardware. Frame-perfect switching is a
+different, harder problem (it is what dedicated playout engines like CasparCG
+exist to solve).
 
 Core of it: [`VlcWallEngine.StartLoad`](src/SimpleWall/Engine/VlcWallEngine.cs)
 and `CompleteSwap`, with the wait/give-up decision isolated in `SwapPolicy` so
