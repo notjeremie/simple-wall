@@ -53,17 +53,6 @@ namespace SimpleWall.Engine
         /// </summary>
         private const int PollIntervalMs = 15;
 
-        /// <summary>
-        /// EXPERIMENT (2026-07-21): once the incoming layer reports a vout, hold the OUTGOING
-        /// clip in front for this long before flipping, to let the occluded incoming layer
-        /// actually paint its first frame while it is still hidden. The open question this
-        /// answers: does libvlc present frames to an occluded window? If yes, the visible black
-        /// at a cut should shrink or vanish. If the black is unchanged and only the switch feels
-        /// slower, occluded layers do NOT paint until fronted, and the two-layer trick cannot be
-        /// made seamless on this hardware. Instrumented via _firstVoutAt logging below.
-        /// </summary>
-        private const int SwapSettleMs = 500;
-
         private readonly LibVLC _libVlc;
         private readonly MediaPlayer _playerA;
         private readonly MediaPlayer _playerB;
@@ -73,10 +62,6 @@ namespace SimpleWall.Engine
         private readonly Timer _firstPictureTimer;
         private readonly Stopwatch _loadStopwatch = new Stopwatch();
         private readonly Action<string> _log;
-
-        // EXPERIMENT: elapsed time at which the pending clip first reported a vout, or null if
-        // not yet. The settle window (SwapSettleMs) is measured from here. Reset per load.
-        private TimeSpan? _firstVoutAt;
 
         private bool _frontIsA = true;
         private int? _pendingSlot;
@@ -252,7 +237,6 @@ namespace SimpleWall.Engine
             // Cleared before Play, never after: a stale true from the previous clip would
             // abandon this one on sight, and every clip after it.
             _pendingFailed = false;
-            _firstVoutAt = null;
 
             // Shown BEFORE Play, never after: libvlc builds its vout against whatever window
             // it is handed at that moment. A window that is invisible at Play and shown
@@ -316,22 +300,6 @@ namespace SimpleWall.Engine
                     return;
 
                 case SwapAction.SwapNow:
-                    // EXPERIMENT: the incoming layer has a vout, but a vout is not a painted
-                    // frame. Hold the outgoing clip in front for SwapSettleMs to give the
-                    // occluded incoming layer time to paint before the flip. The log below is
-                    // the evidence: if the visible black shrinks, occluded layers do paint;
-                    // if not, they only paint once fronted and this cannot be made seamless.
-                    if (_firstVoutAt == null)
-                    {
-                        _firstVoutAt = _loadStopwatch.Elapsed;
-                        _log($"Slot {_pendingSlot} first vout at {_firstVoutAt.Value.TotalMilliseconds:0}ms " +
-                             $"(back Time={BackPlayer.Time}ms); settling {SwapSettleMs}ms before flip");
-                        return;
-                    }
-                    if ((_loadStopwatch.Elapsed - _firstVoutAt.Value).TotalMilliseconds < SwapSettleMs)
-                        return;
-
-                    _log($"Slot {_pendingSlot} settle done (back Time={BackPlayer.Time}ms)");
                     CompleteSwap();
                     return;
 
@@ -370,7 +338,6 @@ namespace SimpleWall.Engine
             CurrentSlot = _pendingSlot;
             _pendingSlot = null;
             _pendingFailed = false;
-            _firstVoutAt = null;
 
             _log($"Swapped to slot {CurrentSlot} after {_loadStopwatch.ElapsedMilliseconds} ms");
             RaiseStateChanged();
@@ -387,7 +354,6 @@ namespace SimpleWall.Engine
             _pendingMedia = null;
             _pendingSlot = null;
             _pendingFailed = false;
-            _firstVoutAt = null;
         }
 
         private void SetPaused(bool paused)
