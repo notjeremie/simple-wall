@@ -1,6 +1,7 @@
 # simple-wall — where things stand
 
-**Last updated:** 2026-07-20, session 6
+**Last updated:** 2026-07-21, session 6 (continued)
+**Current state:** v1.0 tagged and public on GitHub (MIT). Now deployed to two more Win10 machines driving a **different** curved LED / studio-desk screen — unrelated geometry to the original corner wall. Latest work (per-monitor DPI fix, the clip-switch black-frame investigation) is in the Session 6 entry below; read that first.
 **Tests:** 238 passing, 0 failing (+21 this session — per-clip look defaults, Replace-resets-look, `ConfigMigration` seeding, slot-aware `ClassifyLookChange`, `PendingSaveAfter` retry, and the OSC-reply-reads-clip-look regression test)
 **Branch:** `main` (renamed from `master` when the repo was published; user explicitly consented to committing straight to it)
 
@@ -31,7 +32,7 @@
 | 14 | Settings, autostart, logging | ✅ done |
 | 15 | Packaging + Win7 acceptance | 🟢 **wall trip run 2026-07-19; every checklist item passed; sign-off pending the overnight soak, now re-running on the session-5 clip-looks build** — results in `docs/plans/2026-07-16-acceptance.md` |
 
-**Next action: the v1.0 CANDIDATE build (`9f46e59`, clip-looks) is DEPLOYED to the wall and partially verified live (see Session 5). The wall is in production use until 2026-07-20, so the overnight soak + the remaining live checks (replace-reset, idle-grey, calib fold lines) are deferred to when it frees up. Once the soak runs clean on THIS build, merge `master` into `main` and tag `v1.0`.** `master` is at `9f46e59`, six commits ahead of the packaging commit `f1f1533` (`23be9bf` DXVA2 fix, `08a8ce2` default clip, `bcef66e` cover-fit, `115454f` replace-in-place, `9f46e59` clip-looks). The staged exe at `dist/hotfix/SimpleWall.exe` (101,376 bytes) is this build. **Do not tag yet** — the soak (checklist item 13) needs a clean run against `9f46e59` and is the last open item.
+**SUPERSEDED — v1.0 is tagged and public (2026-07-20).** The task table and the packaging notes below are the historical v1.0 record; the live account of everything since is in the Session 6 entry. Open items as of 2026-07-21: (1) the Win7 wall stays on the old v1.0 build for now — the newer DPI build is not worth pushing to a known-good production wall at 100% scaling for zero benefit; merge it there only once a consolidated v1.1 is warranted. (2) The clip-switch black frame is a WON'T-FIX on this app (libvlc won't paint an occluded layer — proven 2026-07-21); frame-perfect switching is the CasparCG studio project's job.
 
 **Task 15 packaging — done and committed:**
 - **`packaging/build-release-package.sh`** builds `dist/simple-wall.zip` (~45MB, 486 files, self-contained). It builds Release on the VM, stages `SimpleWall/{app,install.bat,RUNBOOK.md,acceptance.md}`, strips the x86 natives, and **refuses to zip** if a `config.json`, a log, or the x86 folder leaked in (verified: none do). `dist/` is gitignored, so the SCRIPT lives in `packaging/`, not `dist/` — the spike's script was lost to the ignore, this one isn't.
