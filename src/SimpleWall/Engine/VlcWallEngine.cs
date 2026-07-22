@@ -180,10 +180,11 @@ namespace SimpleWall.Engine
 
             _outputWindow.SetGeometry(bounds);
 
-            // Re-crop to the (possibly new) wall ratio so cover-fit tracks a geometry change.
-            // Both layers, so the idle back player is already correct before its next clip.
-            ApplyCropToFill(_playerA);
-            ApplyCropToFill(_playerB);
+            // Re-fit both layers (crop or stretch per each clip's mode) so a geometry change tracks.
+            // Driven by the clip each physical player is currently showing: front = the clip on the
+            // wall; back = the pending clip if a load is in flight, else null (harmless Crop default).
+            ApplyFit(FrontPlayer, CurrentLookClip);
+            ApplyFit(BackPlayer, _pendingSlot != null ? _library.BySlot(_pendingSlot.Value) : null);
 
             _log($"Output geometry {bounds.Width}x{bounds.Height} @{bounds.X},{bounds.Y}");
         }
@@ -254,9 +255,10 @@ namespace SimpleWall.Engine
             // case neutral is the safe thing to show.
             ApplyAdjust(back, _library.BySlot(slot));
 
-            // Cover-fit the incoming clip before it swaps in, so a wrong-sized clip fills the
-            // wall instead of letterboxing. Same after-Play timing as the adjust filter.
-            ApplyCropToFill(back);
+            // Fit the incoming clip (crop or stretch, per its FitMode) before it swaps in, so a
+            // wrong-sized clip fills the wall instead of letterboxing. Same after-Play timing as
+            // the adjust filter.
+            ApplyFit(back, _library.BySlot(slot));
 
             _loadStopwatch.Restart();
             _firstPictureTimer.Start();
@@ -443,21 +445,19 @@ namespace SimpleWall.Engine
         }
 
         /// <summary>
-        /// Cover-fit, not letterbox. Crops the source to the OUTPUT window's aspect ratio so a
-        /// clip whose dimensions do not match the wall FILLS it -- losing left/right or top/bottom
-        /// (whichever overflows) instead of showing black bars. The real wall is 1664x256 but the
-        /// clips are authored 1964x256; without this they letterbox to ~217px tall. A clip already
-        /// at the wall's ratio is cropped by nothing, so this is a no-op for correct content.
-        ///
-        /// CropGeometry as a "W:H" RATIO crops centred and does NOT distort. AspectRatio would
-        /// stretch to fill and distort -- deliberately not used. Applied to both layers (the back
-        /// clip must be cover-fitted before it swaps in) and re-applied on every ApplyGeometry so
-        /// a geometry change re-crops to the new ratio.
+        /// Applies a clip's fill mode to one player. Crop (the default, and what a null clip gets)
+        /// sets CropGeometry to the output ratio and clears AspectRatio -- cover-fit, no distortion.
+        /// Stretch sets AspectRatio and clears CropGeometry -- distort-to-fill. BOTH are always
+        /// assigned: the A/B players are reused across clips, so the mode the previous clip left must
+        /// be cleared, never inherited. Assigning null is libvlc's "no override", safe even at the
+        /// not-yet-resolved zero geometry. Applied to the back layer before a swap (StartLoad) and
+        /// re-applied on ApplyGeometry so a geometry change re-fits.
         /// </summary>
-        private void ApplyCropToFill(MediaPlayer player)
+        private void ApplyFit(MediaPlayer player, ClipEntry clip)
         {
-            var ratio = CropRatio(_config.OutputWidth, _config.OutputHeight);
-            if (ratio != null) player.CropGeometry = ratio;
+            var (crop, aspect) = FitGeometry(clip?.Fit ?? FitMode.Crop, _config.OutputWidth, _config.OutputHeight);
+            player.CropGeometry = crop;
+            player.AspectRatio = aspect;
         }
 
         /// <summary>
