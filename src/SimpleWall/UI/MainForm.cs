@@ -57,6 +57,8 @@ namespace SimpleWall.UI
         private TrackBar _contrast;
         private Label _brightnessValue;
         private Label _contrastValue;
+        private ComboBox _fit;
+        private bool _syncingFit;
         private readonly Timer _saveDebounce = new Timer { Interval = 800 };
         private readonly Timer _tick = new Timer { Interval = 1000 };
         private SchedulerTab _schedulerTab;
@@ -362,7 +364,7 @@ namespace SimpleWall.UI
                 AutoSize = true,
                 AutoSizeMode = AutoSizeMode.GrowAndShrink,
                 ColumnCount = 4,
-                RowCount = 3,
+                RowCount = 4,
                 Padding = new Padding(8, 4, 8, 4),
                 BackColor = Color.FromArgb(32, 32, 36)
             };
@@ -386,6 +388,38 @@ namespace SimpleWall.UI
             _contrast = NewAdjustBar(CommandKind.Contrast);
             _contrastValue = NewValueLabel();
             AddAdjustRow(bar, 2, "Contrast:", _contrast, _contrastValue, CommandKind.Contrast);
+
+            // Crop vs Stretch is a per-clip property, not a live 0-2 fader, so it is a dropdown
+            // rather than a slider. Index order MUST match FitMode: Crop=0, Stretch=1.
+            _fit = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Dock = DockStyle.Left,
+                Width = 120,
+                ForeColor = Color.FromArgb(220, 220, 226),
+                BackColor = Color.FromArgb(48, 48, 54),
+                FlatStyle = FlatStyle.Flat,
+                Margin = new Padding(0, 6, 6, 0)
+            };
+            _fit.Items.AddRange(new object[] { "Crop", "Stretch" });   // index == (int)FitMode
+            _fit.SelectedIndexChanged += (s, e) =>
+            {
+                if (_syncingFit) return;                    // programmatic sync, not a user action
+                if (CurrentClip == null) return;
+                Command(WallCommand.Fit((FitMode)_fit.SelectedIndex));   // engine mutates clip + re-fits live
+                SaveSoon();                                 // persist, like the slider Scroll handler
+            };
+
+            bar.Controls.Add(new Label
+            {
+                Text = "Fit:",
+                AutoSize = true,
+                ForeColor = Color.FromArgb(200, 200, 206),
+                Anchor = AnchorStyles.Left,
+                Margin = new Padding(0, 8, 6, 0)
+            }, 0, 3);
+            bar.Controls.Add(_fit, 1, 3);
+            _adjustControls.Add(_fit);                      // greys out when no clip is on the wall
 
             SyncAdjustFromWall();
             return bar;
@@ -502,6 +536,14 @@ namespace SimpleWall.UI
         {
             SyncSlider(_brightness, CurrentBrightness);
             SyncSlider(_contrast, CurrentContrast);
+
+            // Programmatic assignment fires SelectedIndexChanged just like a user pick, so guard it
+            // or the sync echoes a Fit command straight back at the engine. The flag is safe from
+            // latching: SelectedIndexChanged fires synchronously within the assignment on this thread.
+            _syncingFit = true;
+            _fit.SelectedIndex = (int)(CurrentClip?.Fit ?? FitMode.Crop);
+            _syncingFit = false;
+
             UpdateAdjustLabels();
         }
 
