@@ -1,9 +1,18 @@
 # simple-wall — where things stand
 
-**Last updated:** 2026-07-21, session 6 (continued)
-**Current state:** v1.0 tagged and public on GitHub (MIT). Now deployed to two more Win10 machines driving a **different** curved LED / studio-desk screen — unrelated geometry to the original corner wall. Latest work (per-monitor DPI fix, the clip-switch black-frame investigation) is in the Session 6 entry below; read that first.
-**Tests:** 238 passing, 0 failing (+21 this session — per-clip look defaults, Replace-resets-look, `ConfigMigration` seeding, slot-aware `ClassifyLookChange`, `PendingSaveAfter` retry, and the OSC-reply-reads-clip-look regression test)
+**Last updated:** 2026-07-22, session 7
+**Current state:** v1.0 tagged and public on GitHub (MIT). Now deployed to two more Win10 machines driving a **different** curved LED / studio-desk screen — unrelated geometry to the original corner wall. Session 7 added a **per-clip Fit mode (Crop / Stretch)** — read the Session 7 entry below first. Session 6 (per-monitor DPI fix, clip-switch black-frame investigation) is below that.
+**Tests:** 251 passing, 0 failing (+13 this session — Fit default, Replace-resets-Fit, config round-trip + fieldless-legacy-is-Crop, pure `FitGeometry` both modes + zero geometry, and `FitFromValue` decode)
 **Branch:** `main` (renamed from `master` when the repo was published; user explicitly consented to committing straight to it)
+
+## Session 7 (2026-07-22) — per-clip Fit mode (Crop / Stretch)
+
+Added a per-clip **Fit** setting alongside the existing per-clip Brightness/Contrast: **Crop** (the historical cover-fit — scale to fill, centre-crop the overflow, no distortion; the default) or **Stretch** (distort the picture to fill the wall exactly — no bars, nothing cropped, aspect not preserved). Built via brainstorm → design → 9-task TDD plan, executed subagent-driven with per-task + final review, all green on the VM.
+
+- **How it works:** `ClipEntry.Fit` (`enum FitMode { Crop, Stretch }`, default Crop). The engine's old always-crop `ApplyCropToFill` became a mode-aware `ApplyFit(player, clip)` that **always assigns both** `MediaPlayer.CropGeometry` and `AspectRatio` (Crop → ratio in CropGeometry, Stretch → ratio in AspectRatio, the other null). Both are set every time because the A/B players are double-buffered and reused across clips — a stale crop/stretch from the previous clip must be cleared, never inherited. The pure `FitGeometry(mode, w, h) → (crop, aspect)` helper is unit-tested without libvlc.
+- **UI:** a Crop/Stretch dropdown in the transport adjustment bar (row 3, under Contrast), affecting the clip on the wall, persisted via the existing debounced `SaveSoon()`. Flows through the engine's single entry point (`WallCommand.Fit` → `CommandKind.Fit` → `SetFit`, re-fits the front layer live). **App-UI-only — deliberately NOT over OSC** (`OscParser` untouched).
+- **No config migration needed:** the enum default `Crop` = 0 means a v1.0 config with no `Fit` field deserializes to Crop — proven by `ClipWithNoFitFieldDeserializesToCrop`.
+- **⚠️ Needs an on-hardware eyeball before it's trusted in production.** The GPU-less build VM cannot prove that libvlc's `AspectRatio` visibly distorts on the real wall GPU, nor that assigning `null` truly clears a prior `CropGeometry`/`AspectRatio` on a reused player — the load-bearing behaviors of this feature. The *logic* (both properties always assigned, exactly one non-null) is unit-tested; the *pixels* are not. RenderShot confirmed the Fit row lays out correctly but does not paint the DropDownList's selected text (a known RenderShot fidelity limit, not a bug). Verify Crop-vs-Stretch and a clip-switch-between-modes on the studio Win10 machines before relying on it.
 
 ## Read these first, in this order
 
