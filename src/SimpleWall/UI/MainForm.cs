@@ -538,11 +538,12 @@ namespace SimpleWall.UI
             SyncSlider(_contrast, CurrentContrast);
 
             // Programmatic assignment fires SelectedIndexChanged just like a user pick, so guard it
-            // or the sync echoes a Fit command straight back at the engine. The flag is safe from
-            // latching: SelectedIndexChanged fires synchronously within the assignment on this thread.
+            // or the sync echoes a Fit command straight back at the engine. try/finally so an
+            // unexpected throw between set and clear can't latch the guard true and silently freeze
+            // the combo's sync-from-wall for the session -- the exact ghost SyncSlider avoids.
             _syncingFit = true;
-            _fit.SelectedIndex = (int)(CurrentClip?.Fit ?? FitMode.Crop);
-            _syncingFit = false;
+            try { _fit.SelectedIndex = (int)(CurrentClip?.Fit ?? FitMode.Crop); }
+            finally { _syncingFit = false; }
 
             UpdateAdjustLabels();
         }

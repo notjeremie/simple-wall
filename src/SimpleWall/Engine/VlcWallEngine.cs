@@ -429,7 +429,7 @@ namespace SimpleWall.Engine
         /// defensively so a stray value can't throw or pick a garbage enum.</summary>
         public static FitMode FitFromValue(float value) => value >= 0.5f ? FitMode.Stretch : FitMode.Crop;
 
-        /// <summary>The clip whose look the fader/slider edits: the one on the wall, or null.</summary>
+        /// <summary>The clip whose look and fit the fader/slider/combo edits: the one on the wall, or null.</summary>
         private ClipEntry CurrentLookClip => CurrentSlot != null ? _library.BySlot(CurrentSlot.Value) : null;
 
         /// <summary>
