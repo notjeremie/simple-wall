@@ -131,7 +131,9 @@ namespace SimpleWall.Model
         ///
         /// The look is RESET to neutral: a new video is a new clip, and inheriting the old video's
         /// brightness/contrast would silently dim a fresh file for reasons no one could see. The
-        /// slot number and its Stream Deck mapping persist; the look does not.
+        /// slot number and its Stream Deck mapping persist; the look does not. Fit resets to Crop
+        /// for the same reason -- a Stretch tuned for the old file's aspect ratio would silently
+        /// distort the new one.
         /// </summary>
         public bool Replace(int slot, string newPath)
         {
@@ -140,6 +142,7 @@ namespace SimpleWall.Model
             clip.Path = newPath;
             clip.Brightness = ClipEntry.NeutralLook;
             clip.Contrast = ClipEntry.NeutralLook;
+            clip.Fit = FitMode.Crop;
             return true;
         }
 

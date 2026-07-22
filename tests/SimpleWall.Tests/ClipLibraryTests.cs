@@ -318,6 +318,19 @@ namespace SimpleWall.Tests
         }
 
         [Fact]
+        public void ReplaceResetsFitToCrop()
+        {
+            var library = new ClipLibrary();
+            library.Add("old.mp4");   // slot 1
+            var clip = library.BySlot(1);
+            clip.Fit = FitMode.Stretch;
+
+            Assert.True(library.Replace(1, "new.mp4"));
+
+            Assert.Equal(FitMode.Crop, library.BySlot(1).Fit);
+        }
+
+        [Fact]
         public void ANewClipEntryHasANeutralLook()
         {
             var clip = new ClipEntry();
