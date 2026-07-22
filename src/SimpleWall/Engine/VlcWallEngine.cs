@@ -151,6 +151,7 @@ namespace SimpleWall.Engine
                 case CommandKind.Stop: Stop(); break;
                 case CommandKind.Brightness: SetBrightness(command.Value); break;
                 case CommandKind.Contrast: SetContrast(command.Value); break;
+                case CommandKind.Fit: SetFit(command.Value); break;
             }
         }
 
@@ -408,6 +409,25 @@ namespace SimpleWall.Engine
             ApplyAdjust(FrontPlayer, clip);
             RaiseStateChanged();
         }
+
+        /// <summary>
+        /// Fit belongs to the CLIP, like the look: edits whatever is on the wall and re-fits the front
+        /// layer live (the back layer, if loading, already holds the incoming clip's own mode).
+        /// Nothing playing means nothing to edit -- dropped and logged, not stored against the wrong
+        /// clip. RaiseStateChanged so the UI reflects it; persistence is the UI's job (SaveSoon).
+        /// </summary>
+        private void SetFit(float value)
+        {
+            var clip = CurrentLookClip;
+            if (clip == null) { _log("Fit change ignored -- no clip on the wall."); return; }
+            clip.Fit = FitFromValue(value);
+            ApplyFit(FrontPlayer, clip);
+            RaiseStateChanged();
+        }
+
+        /// <summary>Decodes the mode carried in WallCommand.Value; only 0/1 are ever sent, but rounds
+        /// defensively so a stray value can't throw or pick a garbage enum.</summary>
+        public static FitMode FitFromValue(float value) => value >= 0.5f ? FitMode.Stretch : FitMode.Crop;
 
         /// <summary>The clip whose look the fader/slider edits: the one on the wall, or null.</summary>
         private ClipEntry CurrentLookClip => CurrentSlot != null ? _library.BySlot(CurrentSlot.Value) : null;

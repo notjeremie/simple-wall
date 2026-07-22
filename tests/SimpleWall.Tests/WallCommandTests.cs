@@ -1,4 +1,5 @@
 using SimpleWall.Engine;
+using SimpleWall.Model;
 using Xunit;
 
 namespace SimpleWall.Tests
@@ -29,6 +30,14 @@ namespace SimpleWall.Tests
 
             Assert.Equal(CommandKind.Brightness, command.Kind);
             Assert.Equal(0.5f, command.Value);
+        }
+
+        [Fact]
+        public void FitSetsKindAndEncodesModeInValue()
+        {
+            Assert.Equal(CommandKind.Fit, WallCommand.Fit(FitMode.Stretch).Kind);
+            Assert.Equal(1f, WallCommand.Fit(FitMode.Stretch).Value);
+            Assert.Equal(0f, WallCommand.Fit(FitMode.Crop).Value);
         }
     }
 }

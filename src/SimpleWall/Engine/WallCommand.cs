@@ -1,6 +1,8 @@
+using SimpleWall.Model;
+
 namespace SimpleWall.Engine
 {
-    public enum CommandKind { PlayClip, Play, Pause, Toggle, Stop, Brightness, Contrast }
+    public enum CommandKind { PlayClip, Play, Pause, Toggle, Stop, Brightness, Contrast, Fit }
 
     public class WallCommand
     {
@@ -13,5 +15,7 @@ namespace SimpleWall.Engine
         public static WallCommand Simple(CommandKind kind) => new WallCommand { Kind = kind };
         public static WallCommand WithValue(CommandKind kind, float value) =>
             new WallCommand { Kind = kind, Value = value };
+        public static WallCommand Fit(FitMode mode) =>
+            new WallCommand { Kind = CommandKind.Fit, Value = (float)mode };
     }
 }

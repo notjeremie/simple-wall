@@ -36,5 +36,15 @@ namespace SimpleWall.Tests
             Assert.Null(crop);
             Assert.Null(aspect);
         }
+
+        [Theory]
+        [InlineData(0f, FitMode.Crop)]
+        [InlineData(1f, FitMode.Stretch)]
+        [InlineData(0.4f, FitMode.Crop)]     // defensive: rounds to nearest valid mode
+        [InlineData(0.6f, FitMode.Stretch)]
+        public void FitFromValueDecodesTheMode(float value, FitMode expected)
+        {
+            Assert.Equal(expected, VlcWallEngine.FitFromValue(value));
+        }
     }
 }
