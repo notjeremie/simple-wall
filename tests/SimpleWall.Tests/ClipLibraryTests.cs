@@ -324,5 +324,12 @@ namespace SimpleWall.Tests
             Assert.Equal(ClipEntry.NeutralLook, clip.Brightness);
             Assert.Equal(ClipEntry.NeutralLook, clip.Contrast);
         }
+
+        [Fact]
+        public void ANewClipEntryDefaultsToCrop()
+        {
+            var clip = new ClipEntry();
+            Assert.Equal(FitMode.Crop, clip.Fit);
+        }
     }
 }

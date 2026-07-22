@@ -1,5 +1,14 @@
 namespace SimpleWall.Model
 {
+    /// <summary>
+    /// How a clip fills the wall when its aspect ratio does not match. Crop is cover-fit --
+    /// scale to fill, centre-crop the overflow, no distortion (the historical behaviour, and the
+    /// default so old configs and fresh clips are unchanged). Stretch distorts the picture to
+    /// fill the wall exactly -- no bars, nothing cropped, aspect not preserved.
+    /// Crop is 0 so a config written before this field deserializes to it.
+    /// </summary>
+    public enum FitMode { Crop, Stretch }
+
     public class ClipEntry
     {
         /// <summary>
@@ -24,5 +33,12 @@ namespace SimpleWall.Model
         /// </summary>
         public float Brightness { get; set; } = NeutralLook;
         public float Contrast { get; set; } = NeutralLook;
+
+        /// <summary>
+        /// Per-clip fill mode, applied to the wall whenever this clip plays. Like the look, it
+        /// belongs to the clip, not the wall. Defaults to <see cref="FitMode.Crop"/> so existing
+        /// clips are unchanged and old configs (no such field) deserialize to cover-fit.
+        /// </summary>
+        public FitMode Fit { get; set; } = FitMode.Crop;
     }
 }
