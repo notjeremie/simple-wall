@@ -479,6 +479,21 @@ namespace SimpleWall.Engine
         }
 
         /// <summary>
+        /// The (CropGeometry, AspectRatio) pair for a clip's fill mode against the output geometry.
+        /// Crop returns (ratio, null) -- cover-fit, centre-crop, no distortion. Stretch returns
+        /// (null, ratio) -- forcing AspectRatio to the window's own ratio makes libvlc stretch the
+        /// source to fill it, distorting. Exactly one property carries the ratio and the other is
+        /// null so a reused player never keeps a stale crop/stretch from the previous clip. Both null
+        /// for a not-yet-resolved (zero) geometry -- no bogus string reaches libvlc. Pure and static
+        /// so the choice is tested without libvlc, same as CropRatio.
+        /// </summary>
+        public static (string crop, string aspect) FitGeometry(FitMode mode, int width, int height)
+        {
+            var ratio = CropRatio(width, height);   // null for zero/negative geometry
+            return mode == FitMode.Stretch ? (null, ratio) : (ratio, null);
+        }
+
+        /// <summary>
         /// The pending clip failed to play. Only the BACK player matters here: the front one
         /// erroring is a clip already on the wall, which Task 15 will have to look at, but there
         /// is nothing useful to do about it from here -- stopping it would blank the wall to no
