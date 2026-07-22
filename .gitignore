@@ -10,3 +10,6 @@ artifacts/
 
 # macOS
 .DS_Store
+
+# git worktrees (isolated feature workspaces)
+.worktrees/
