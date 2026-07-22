@@ -76,6 +76,31 @@ namespace SimpleWall.Tests
         }
 
         [Fact]
+        public void ClipFitRoundTrips()
+        {
+            var path = TempFile();
+            var store = new ConfigStore(path);
+            var config = store.Load();
+            config.Clips.Add(new ClipEntry { Slot = 3, Path = @"C:\clips\a.mp4", Fit = FitMode.Stretch });
+            store.Save(config);
+
+            var loaded = new ConfigStore(path).Load();
+
+            Assert.Equal(FitMode.Stretch, Assert.Single(loaded.Clips).Fit);
+        }
+
+        [Fact]
+        public void ClipWithNoFitFieldDeserializesToCrop()
+        {
+            var path = TempFile();
+            File.WriteAllText(path, "{ \"Clips\": [ { \"Slot\": 3, \"Path\": \"C:\\\\clips\\\\a.mp4\" } ] }");
+
+            var config = new ConfigStore(path).Load();
+
+            Assert.Equal(FitMode.Crop, Assert.Single(config.Clips).Fit);
+        }
+
+        [Fact]
         public void DefaultSlotRoundTripsAndIsZeroWhenAbsent()
         {
             var path = TempFile();
