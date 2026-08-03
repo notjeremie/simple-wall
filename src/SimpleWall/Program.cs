@@ -3,6 +3,7 @@ using System.IO;
 using System.Threading;
 using System.Windows.Forms;
 using SimpleWall.Engine;
+using SimpleWall.Infrastructure;
 using SimpleWall.Logging;
 using SimpleWall.Model;
 using SimpleWall.Osc;
@@ -133,10 +134,18 @@ namespace SimpleWall
                     store.Save(config);
                 };
 
+                // Constructed before the form so the form can be handed its Beat. Disposed LAST of
+                // the usings below -- i.e. innermost, so it is torn down FIRST, the instant
+                // Application.Run returns. From that moment the message pump has legitimately
+                // stopped and so has the heartbeat, and a watchdog still watching would read an
+                // ordinary shutdown as a hang and kill the process mid config-save.
+                var watchdog = new UiWatchdog(TimeSpan.FromSeconds(config.WatchdogSeconds), WriteLog);
+
                 using (var form = new MainForm(engine, library, scheduler, config, thumbnails, save, WriteLog,
-                    engine.ApplyGeometry))
+                    engine.ApplyGeometry, heartbeat: watchdog.Beat))
                 using (var listener = new OscListener(config.OscPort, form, WriteLog))
                 using (var replies = new OscReplySender(engine, config, WriteLog))
+                using (watchdog)
                 {
                     // The listener marshals onto the form, so this handler is already on the UI
                     // thread by the time it runs -- which is what the engine requires.
@@ -167,6 +176,11 @@ namespace SimpleWall
 
                     var listening = listener.Start();
                     replies.Start();
+
+                    // Armed here, not earlier: everything above this line is startup work ON the
+                    // UI thread (libvlc, the output window, the first clip) and none of it beats,
+                    // so a watchdog armed at the top of Run would be timing the boot.
+                    watchdog.Start();
 
                     // After Start, never before: the settings tab reports the port actually bound,
                     // and the whole point of that line is that it cannot be a guess.

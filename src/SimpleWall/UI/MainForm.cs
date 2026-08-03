@@ -96,6 +96,8 @@ namespace SimpleWall.UI
         /// </summary>
         private DateTime _previousTick = DateTime.Now;
 
+        private readonly Action _heartbeat;
+
         private ClipBox _dragSource;
         private ClipBox _menuTarget;
         private Point _dragOrigin;
@@ -110,10 +112,17 @@ namespace SimpleWall.UI
         /// Injectable only so a render fixture can show the settings tab's warning states without
         /// touching this machine's registry.
         /// </param>
+        /// <param name="heartbeat">
+        /// UiWatchdog.Beat. Called from the scheduler tick below -- i.e. from the message pump,
+        /// which is the thing the watchdog is there to notice the death of. Optional: a render
+        /// fixture has no process worth restarting.
+        /// </param>
         public MainForm(IWallEngine engine, ClipLibrary library, Scheduler scheduler, WallConfig config,
             ThumbnailCache thumbnails, Action saveConfig = null, Action<string> log = null,
-            Action applyGeometry = null, Autostart autostart = null, string exePath = null)
+            Action applyGeometry = null, Autostart autostart = null, string exePath = null,
+            Action heartbeat = null)
         {
+            _heartbeat = heartbeat ?? (() => { });
             _engine = engine ?? throw new ArgumentNullException(nameof(engine));
             _library = library ?? throw new ArgumentNullException(nameof(library));
             _scheduler = scheduler ?? throw new ArgumentNullException(nameof(scheduler));
@@ -313,6 +322,13 @@ namespace SimpleWall.UI
                 // Otherwise re-enabling would fire everything missed while it was switched off,
                 // which is the catch-up this design deliberately does not do.
                 _previousTick = now;
+
+                // In the finally, and AFTER the line above, so that reaching this timer at all is
+                // what proves the UI thread is alive -- not the schedule being enabled, not the
+                // tick body succeeding. A heartbeat that only beats on the happy path would let a
+                // permanently-throwing tick read as a hang and restart a working wall. Last,
+                // because _previousTick advancing matters more than the beat if this ever throws.
+                _heartbeat();
             }
         }
 
