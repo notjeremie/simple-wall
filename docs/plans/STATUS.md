@@ -1,9 +1,57 @@
 # simple-wall — where things stand
 
-**Last updated:** 2026-07-22, session 7
-**Current state:** v1.0 tagged and public on GitHub (MIT). Now deployed to two more Win10 machines driving a **different** curved LED / studio-desk screen — unrelated geometry to the original corner wall. Session 7 added a **per-clip Fit mode (Crop / Stretch)** — read the Session 7 entry below first. Session 6 (per-monitor DPI fix, clip-switch black-frame investigation) is below that.
-**Tests:** 251 passing, 0 failing (+13 this session — Fit default, Replace-resets-Fit, config round-trip + fieldless-legacy-is-Crop, pure `FitGeometry` both modes + zero geometry, and `FitFromValue` decode)
-**Branch:** `main` (renamed from `master` when the repo was published; user explicitly consented to committing straight to it)
+**Last updated:** 2026-08-04, session 8
+**Current state:** v1.0 tagged and public on GitHub (MIT), plus two Win10 machines driving a **different** curved LED / studio-desk screen. **Session 8 is the one to read first: the Win7 wall hung for three days and there is now a UI watchdog.** The Win7 wall is no longer on old v1.0 — it runs `main` + Fit + watchdog. Session 7 (per-clip Fit) and session 6 (DPI, black-frame investigation) are below.
+**Tests:** 269 passing, 0 failing (+18 this session — watchdog policy and thread behaviour, and the daily-log rewrite: retention, the two-condition delete guard, clock-jump safety, and that Sweep cannot reach outside `logs/`)
+**Branch:** ⚠️ `feat/ui-watchdog`, 3 commits, **NOT merged to `main`** — held deliberately pending the overnight soak of 2026-08-04. The wall is running exactly this branch's code.
+
+## Session 8 (2026-08-04) — a three-day silent hang, and the watchdog that answers it
+
+**Read this before touching the swap path.** On **2026-07-30 at 16:59:00.5**, mid clip-swap, the Win7 wall's UI thread deadlocked inside libvlc and never returned. It stayed that way until it was force-quit on **2026-08-02 at 13:43** — three days.
+
+**Why it was invisible.** The process stayed alive and so did libvlc's decode/vout threads, so the wall carried on looping its clip *perfectly*. What died was the message pump: 15 scheduled cues missed, no OSC, no mouse, and **not one line in the log**. A wall that is visibly black gets fixed in ten minutes; a wall that looks perfect and silently ignores every instruction waits for Monday.
+
+**How it was diagnosed — from the log alone, by elimination.** Signature: `Loading slot 10` with no matching `Swapped to slot`, then nothing. That rules out a managed exception (both crash handlers in `Program.cs` write to the log, and `Log.Append` opens/writes/closes per line, so nothing buffers — there was no `CRASH via` line), a clean exit (no `SimpleWall stopped.`), and a reboot (autostart is `HKCU\Run`, logon-only — a reboot with auto-logon would have written `SimpleWall starting.`). **The decisive fact was that the operator force-quit it**, so the process was alive: a hang, not a crash.
+
+**⚠️ THE DEADLOCK IS NOT FIXED.** Only two things run on the UI thread in that window: `BackPlayer.VoutCount` (polled every 15 ms) and **`outgoing.Stop()` in `CompleteSwap`**. `Stop()` is the strong favourite — `libvlc_media_player_stop()` is synchronous and joins the vout thread, and if that thread is doing a blocking `SendMessage` to the VideoView window the UI thread owns and is no longer pumping, both wait forever. Known LibVLCSharp 3.x hazard; libvlc 4 added `stop_async` for exactly this. **Supporting measurement in the wall's own log:** on 07-29 at 18:57:31 a `Stop()` on a mid-flight load blocked the UI thread **152 ms**, where every other trigger→load gap in 672 lines is 2–5 ms. It cannot be reproduced off the wall — the build VM has no GPU, so it never builds a Direct3D9 vout to deadlock on.
+
+### The watchdog (`Infrastructure/UiWatchdog.cs` + pure `WatchdogPolicy.cs`)
+
+Mitigation, not cure: it turns a three-day outage into ~2.5 minutes and, more usefully, makes the next occurrence **write a `WATCHDOG:` line instead of nothing**. That line is the evidence needed to go after `Stop()` properly.
+
+- **The watcher thread shares nothing with the UI thread but an interlocked `long`** — no `Invoke`, no `BeginInvoke`, no WinForms. A watchdog that pokes the deadlocked thread to ask whether it is deadlocked joins it. (A `BeginInvoke`-probe design was considered and rejected for this.)
+- **The heartbeat is MainForm's existing 1-second scheduler tick**, beaten from its `finally` — the pump is what stopped, so this watches the real symptom, and the `finally` means a permanently-throwing tick still reads as alive. No second timer.
+- **`Process.GetCurrentProcess().Kill()`, never `Environment.Exit`** — Exit runs finalizers and an AppDomain unload, either of which can wait on the very thread being escaped.
+- **The replacement is scheduled BEFORE the kill, and it does not kill if that fails.** A hung app still shows a looping clip; a killed app with no replacement shows the desktop, and `HKCU\Run` only fires at logon.
+- **`WatchdogSeconds` defaults to 120, not 60**, because the clips are on the `V:` network share and `PlayClip` calls `File.Exists` on that path **on the UI thread** — on a dropped share that blocks for tens of seconds, and two in one tick would clear 60 s and restart a wall whose only problem was a slow file server. `0` disables it.
+- Elapsed time uses `Stopwatch`, never `DateTime` subtraction — this machine's clock jumps (see `TickGuard`), and a w32time correction between checks would restart a healthy wall.
+
+**Verified on the real Win7 wall:** boots and arms; **95 minutes with no false positive** (~47 threshold windows) with the UI thread probed live by a mouse click; **4 forced-restart cycles**, each `WATCHDOG:` → back up in **5.2 s**. To force one with no tools, set `WatchdogSeconds` to `1` — shorter than the heartbeat, so it trips on a healthy app and exercises detect → log → kill → relaunch end to end.
+
+### The bug the first real test found: the OSC socket leaked into the relaunch chain
+
+Every watchdog-restarted instance came up with `OSC port 7000 could not be opened (AddressAlreadyInUse)` and stayed that way until launched by hand — wall, schedule and mouse fine, **Stream Deck dead**, which is most of the point of restarting.
+
+**Cause:** Windows creates socket handles **inheritable by default**, and `Process.Start` with `UseShellExecute=false` calls `CreateProcess` with `bInheritHandles=true`. The watchdog's own relauncher captured the socket in passing and handed it down the chain. **What pins it is what did NOT leak:** the single-instance mutex was released correctly every time (the replacement started fully, no "already running" dialog) while the socket was not — .NET creates mutex handles non-inheritable and sockets inheritable, and only the inheritable one survived. Fixed at the socket (`SetHandleInformation`, `OscListener.Start`) rather than at the one call site that spawns a child today, and re-verified on hardware.
+
+**Process note:** 264 green tests and an end-to-end check of the relaunch command line on the VM could not have caught this — the leak only exists across a real restart of a real process holding a real socket. ~90 seconds of a forced-restart test on the wall found it. Same lesson as session 6.
+
+### Logging: one file per day, replacing the 5 MB roll
+
+`logs\simple-wall-YYYY-MM-DD.log`, 90-day retention. Two reasons: the roll **destroys evidence** (incidents here are weeks apart and a ~10 MB two-file ceiling silently discards the record you need — diagnosing 07-30 meant reading 672 lines across 14 days and three deployments), and the roll **was the dangerous part of the class**, a rename underneath live writers that its own header called impossible to prove. That code is gone rather than fixed.
+
+- `Sweep` needs **two** conditions before deleting: the name must match the stem *and* the date must parse exactly. It cannot reach outside `logs/` — **the wall's pre-existing `simple-wall.log`, which holds the 07-30 record, is deliberately untouched on upgrade.**
+- `LogPaths.ActiveLogDirectory` still means the **app** directory, not `logs/` — `config.json` is resolved from it, and moving it would have silently relocated the wall's configuration. Tested.
+- The lock survived the roll it was written for, for a new reason: a crash stack exceeds a `StreamWriter` buffer, so one `WriteCrash` is several `WriteFile` calls and two at once would interleave into a torn stack.
+- `docs/RUNBOOK.md` and `packaging/build-release-package.sh` updated to match.
+
+### ⚠️ Open at the end of session 8
+
+- **The libvlc `Stop()` deadlock is unfixed.** Next occurrence should log a `WATCHDOG:` line — that is the evidence to act on.
+- **The daily-log change is built but NOT deployed.** The wall is running the watchdog + socket fix only. Deploy planned the morning of 2026-08-05 after the overnight soak. First check after that deploy: `logs/` exists with today's file, the old `simple-wall.log` is still there, and **`config.json` still has the clips** — that last one is the failure that would hurt.
+- **Branch `feat/ui-watchdog` is not merged.**
+- Only **one** post-fix restart cycle was observed, not three. The old socket bug chained across generations; the fix clears the flag at creation so every generation is identical, but gen3 was not directly observed.
+- Session 7's Fit feature reached the Win7 wall as a side effect of the exe swap (default `Crop` reproduces the old cover-fit, and nothing looked different) — **Stretch still has never been eyeballed on hardware.**
 
 ## Session 7 (2026-07-22) — per-clip Fit mode (Crop / Stretch)
 
