@@ -38,6 +38,10 @@ rm -rf "$STAGE/SimpleWall/app/libvlc/win-x86"
 
 # Runtime artifacts must never ship -- a stale log or config would be read as
 # this deployment's own, and a shipped config.json would overwrite the wall's.
+# The logs/ folder is where the daily files live since 2026-08-05; the two loose
+# names are the pre-08-05 single-file log and its backup, still swept in case a
+# build runs against an older tree.
+rm -rf "$STAGE/SimpleWall/app/logs"
 rm -f "$STAGE/SimpleWall/app/simple-wall.log" "$STAGE/SimpleWall/app/simple-wall.1.log" \
       "$STAGE/SimpleWall/app/config.json"
 # The .pdb is debug symbols -- no value on the wall, and it just inflates the zip.
@@ -60,6 +64,7 @@ check "acceptance.md"
 
 if [ -d "$STAGE/SimpleWall/app/libvlc/win-x86" ]; then echo "  WARN win-x86 still present"; fail=1; fi
 if [ -e "$STAGE/SimpleWall/app/config.json" ];    then echo "  WARN config.json shipped"; fail=1; fi
+if [ -e "$STAGE/SimpleWall/app/logs" ];           then echo "  WARN logs/ shipped"; fail=1; fi
 
 [ "$fail" -eq 0 ] || { echo "PACKAGE INCOMPLETE -- not zipping"; exit 1; }
 

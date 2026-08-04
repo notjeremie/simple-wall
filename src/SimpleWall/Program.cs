@@ -162,10 +162,14 @@ namespace SimpleWall
                         engine.Execute(command);
                     };
 
-                    // Captured as well as logged, so the settings tab can say WHY OSC is off
-                    // rather than just that it is. Raised synchronously from Start below.
+                    // Captured, NOT logged: OscListener.Start already writes this message itself,
+                    // and doing it here too printed the failure twice -- visible in the wall's log
+                    // on 2026-08-04, where every watchdog-restarted instance reported its
+                    // AddressAlreadyInUse in duplicate. Captured because the settings tab can then
+                    // say WHY OSC is off rather than just that it is. Raised synchronously from
+                    // Start below.
                     string oscFailure = null;
-                    listener.Failed += (s, message) => { WriteLog(message); oscFailure = message; };
+                    listener.Failed += (s, message) => oscFailure = message;
 
                     // Force the window's handle to exist BEFORE anything can arrive. The listener
                     // drops commands while there is no handle to marshal onto (it will not run
