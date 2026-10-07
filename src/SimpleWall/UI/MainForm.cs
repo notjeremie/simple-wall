@@ -139,6 +139,7 @@ namespace SimpleWall.UI
             _savedContrast = CurrentContrast;
 
             Text = "SimpleWall";
+            Icon = AppIcon.Load();
 
             // Wide enough for five tiles and the + across, with room to spare. At 920 it missed
             // by two pixels and orphaned the + onto a row of its own, which looks broken rather
