@@ -188,7 +188,7 @@ namespace SimpleWall.UI
                 Height = 24,
                 ForeColor = Color.FromArgb(170, 170, 176),
                 Padding = new Padding(8, 5, 8, 0),
-                Text = "Drop .mp4 files here, or press +"
+                Text = "Drop videos or images here, or press +"
             };
 
             _boxMenu = new ContextMenuStrip();
@@ -870,7 +870,7 @@ namespace SimpleWall.UI
             // the wall." is true, useless, and the first thing the operator ever reads.
             if (_library.Clips.Count == 0)
             {
-                _status.Text = "No clips yet -- drop video files here, or press +";
+                _status.Text = "No clips yet -- drop videos or images here, or press +";
                 return;
             }
 
@@ -982,7 +982,7 @@ namespace SimpleWall.UI
             }
 
             if (rejected > 0 && added == 0)
-                notice = "Those don't look like video files.";
+                notice = "Those don't look like video or image files.";
 
             // BuildGrid first, notice second: the other way round the rebuild's repaint wipes
             // the message. At the 50-clip ceiling this used to silently swallow the extra files.
@@ -1000,7 +1000,7 @@ namespace SimpleWall.UI
         /// </summary>
         private void ReplaceClip(int slot, string path)
         {
-            if (!IsClipFile(path)) { SetNotice("That doesn't look like a video file."); return; }
+            if (!IsClipFile(path)) { SetNotice("That doesn't look like a video or image file."); return; }
 
             if (!_library.Replace(slot, path))
             {
@@ -1026,7 +1026,7 @@ namespace SimpleWall.UI
             using (var dialog = new OpenFileDialog
             {
                 Multiselect = false,
-                Filter = "Video files|*.mp4;*.mov;*.avi;*.mkv;*.m4v|All files|*.*"
+                Filter = MediaFiles.DialogFilter
             })
             {
                 if (dialog.ShowDialog(this) == DialogResult.OK)
@@ -1050,7 +1050,7 @@ namespace SimpleWall.UI
             using (var dialog = new OpenFileDialog
             {
                 Multiselect = true,
-                Filter = "Video files|*.mp4;*.mov;*.avi;*.mkv;*.m4v|All files|*.*"
+                Filter = MediaFiles.DialogFilter
             })
             {
                 if (dialog.ShowDialog(this) == DialogResult.OK) AddClips(dialog.FileNames);
@@ -1079,13 +1079,13 @@ namespace SimpleWall.UI
             if (e.Data.GetDataPresent(DataFormats.FileDrop))
             {
                 // Dropping ON a clip tile REPLACES that slot (same number, same Stream Deck
-                // button) with the first video; any extras are added so a multi-file drop is not
+                // button) with the first file; any extras are added so a multi-file drop is not
                 // silently lossy. Dropping on the grid background or the + tile still just adds.
-                var videos = ((string[])e.Data.GetData(DataFormats.FileDrop)).Where(IsClipFile).ToArray();
-                if (videos.Length == 0) { SetNotice("Those don't look like video files."); return; }
+                var files = ((string[])e.Data.GetData(DataFormats.FileDrop)).Where(IsClipFile).ToArray();
+                if (files.Length == 0) { SetNotice("Those don't look like video or image files."); return; }
 
-                ReplaceClip(target.Slot, videos[0]);
-                if (videos.Length > 1) AddClips(videos.Skip(1));
+                ReplaceClip(target.Slot, files[0]);
+                if (files.Length > 1) AddClips(files.Skip(1));
                 return;
             }
 
@@ -1196,13 +1196,7 @@ namespace SimpleWall.UI
         private static bool ClipExists(string path) =>
             !string.IsNullOrWhiteSpace(path) && File.Exists(path);
 
-        private static bool IsClipFile(string path)
-        {
-            if (!ClipExists(path)) return false;
-            var extension = System.IO.Path.GetExtension(path)?.ToLowerInvariant();
-            return extension == ".mp4" || extension == ".mov" || extension == ".avi" ||
-                   extension == ".mkv" || extension == ".m4v";
-        }
+        private static bool IsClipFile(string path) => ClipExists(path) && MediaFiles.IsSupported(path);
 
         /// <summary>
         /// The engine raises StateChanged on the UI thread today, but OSC (Task 12) will not, and

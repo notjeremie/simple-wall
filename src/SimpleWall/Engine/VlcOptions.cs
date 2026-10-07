@@ -30,6 +30,19 @@ namespace SimpleWall.Engine
         public const int InputRepeat = 65535;
 
         /// <summary>
+        /// How long libvlc shows a still image before simulating its end. The default is 10
+        /// seconds, so a still would "end" every 10s and be re-opened by :input-repeat --
+        /// a reload (and a possible flash) six times a minute, and the countdown would run out
+        /// in ~7.5 days instead of weeks. Negative means "unlimited": the image demuxer
+        /// never reaches its end, EndReached never fires, and the picture just stays.
+        ///
+        /// Set on EVERY media, video included, rather than branching on file type: only the
+        /// image demuxer reads it, so a video ignores it. LibVlcContractTests proves both that
+        /// libvlc honours it per-media and that -1 outlives the 10s default.
+        /// </summary>
+        public const int ImageDuration = -1;
+
+        /// <summary>
         /// Options passed to libvlc itself, read once at construction and never again.
         ///
         /// Deliberately short. The spike shipped with Win7 fallbacks (--vout=direct3d9,
@@ -59,6 +72,7 @@ namespace SimpleWall.Engine
             var options = new List<string>
             {
                 $":input-repeat={repeat}",
+                $":image-duration={ImageDuration}",
 
                 // Belt and braces with --no-audio above: a media-level option survives even
                 // if someone later "simplifies" the instance-level one away.

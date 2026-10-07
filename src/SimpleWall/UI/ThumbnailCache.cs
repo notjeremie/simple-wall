@@ -1,4 +1,7 @@
 using System;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -6,6 +9,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using LibVLCSharp.Shared;
+using SimpleWall.Model;
 
 namespace SimpleWall.UI
 {
@@ -118,7 +122,9 @@ namespace SimpleWall.UI
             {
                 // Another caller may have made it while we queued.
                 if (File.Exists(destination)) return destination;
-                return await Task.Run(() => Extract(clipPath, destination)).ConfigureAwait(false);
+                return await Task.Run(() => MediaFiles.IsImage(clipPath)
+                    ? Scale(clipPath, destination)
+                    : Extract(clipPath, destination)).ConfigureAwait(false);
             }
             finally
             {
@@ -168,6 +174,38 @@ namespace SimpleWall.UI
             finally
             {
                 try { ResetStaging(); } catch { /* best effort */ }
+            }
+        }
+
+        /// <summary>
+        /// A still image needs no decoder session to find its "first frame" -- it IS the frame --
+        /// so it is scaled in-process with GDI+ rather than through libvlc. Same 160x90 output as
+        /// the scene filter (stretched, as scene-width/height does), no GPU, no staging directory.
+        /// Read through a stream so the file is not left locked: an operator overwriting the
+        /// image on the share must not be told it is in use.
+        /// </summary>
+        private string Scale(string imagePath, string destination)
+        {
+            try
+            {
+                Directory.CreateDirectory(_directory);
+
+                using (var stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                using (var source = Image.FromStream(stream))
+                using (var thumbnail = new Bitmap(Width, Height))
+                using (var graphics = Graphics.FromImage(thumbnail))
+                {
+                    graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                    graphics.DrawImage(source, 0, 0, Width, Height);
+                    thumbnail.Save(destination, ImageFormat.Png);
+                }
+
+                return destination;
+            }
+            catch (Exception)
+            {
+                // A thumbnail is never worth taking anything else down with it.
+                return null;
             }
         }
 
