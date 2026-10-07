@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1E2433"/>
+      <stop offset="1" stop-color="#0C0E14"/>
+    </linearGradient>
+    <linearGradient id="led" gradientUnits="userSpaceOnUse" x1="22" y1="0" x2="234" y2="0">
+      <stop offset="0" stop-color="#FF8A1F"/>
+      <stop offset="0.5" stop-color="#FF2F7A"/>
+      <stop offset="1" stop-color="#7A5CFF"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#FF2F7A" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#FF2F7A" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="48" fill="url(#bg)"/>
+  <ellipse cx="128" cy="196" rx="100" ry="22" fill="url(#glow)"/>
+  <!-- left return, front face, right return -->
+  <polygon points="22,104 72,92 72,164 22,152" fill="url(#led)"/>
+  <polygon points="22,104 72,92 72,164 22,152" fill="#000" opacity="0.40"/>
+  <rect x="72" y="92" width="112" height="72" fill="url(#led)"/>
+  <polygon points="184,92 234,104 234,152 184,164" fill="url(#led)"/>
+  <polygon points="184,92 234,104 234,152 184,164" fill="#000" opacity="0.40"/>
+  <g stroke="#0C0E14" stroke-opacity="0.35" stroke-width="2">
+    <line x1="72" y1="128" x2="184" y2="128"/>
+    <line x1="100" y1="92" x2="100" y2="164"/>
+    <line x1="128" y1="92" x2="128" y2="164"/>
+    <line x1="156" y1="92" x2="156" y2="164"/>
+    <line x1="22" y1="128" x2="72" y2="128"/>
+    <line x1="184" y1="128" x2="234" y2="128"/>
+  </g>
+  <g stroke="#FFFFFF" stroke-opacity="0.6" stroke-width="2">
+    <line x1="72" y1="92" x2="72" y2="164"/>
+    <line x1="184" y1="92" x2="184" y2="164"/>
+  </g>
+</svg>

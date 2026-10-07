@@ -8,6 +8,8 @@
     <AssemblyName>SimpleWall</AssemblyName>
     <!-- Per-monitor DPI awareness. See app.manifest for why this is not optional. -->
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Explorer and a pinned taskbar shortcut read this one; the windows load the embedded copy (UI/AppIcon.cs). -->
+    <ApplicationIcon>SimpleWall.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
@@ -16,5 +18,8 @@
     <PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.21" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="Rug.Osc" Version="1.*" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="SimpleWall.ico" LogicalName="SimpleWall.ico" />
   </ItemGroup>
 </Project>

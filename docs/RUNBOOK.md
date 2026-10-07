@@ -13,11 +13,17 @@ deployment, not the spike. Follow the numbered steps in order. Where a step
 says **record**, write what you saw into `acceptance.md` — that file is the
 sign-off for this trip.
 
-The app writes everything it does to `simple-wall.log`, next to `SimpleWall.exe`.
+The app writes everything it does to a **`logs\` folder next to `SimpleWall.exe`**,
+one file per day: `logs\simple-wall-2026-08-05.log`. Files older than 90 days are
+deleted automatically at startup; nothing else in that folder is ever touched.
 **The exact folder is shown in the app's title bar** — if the app was unzipped
 somewhere read-only it falls back to `%LOCALAPPDATA%\simple-wall\` and then the
-Desktop, and the title bar says which. Bring that log back with the filled-in
-`acceptance.md`.
+Desktop, and the title bar says which. Bring the relevant day's log back with the
+filled-in `acceptance.md`.
+
+Installs from before 2026-08-05 have a single `simple-wall.log` in the app folder
+instead. Upgrading leaves it exactly where it is — it is the only record of
+anything that happened before the change, so do not delete it.
 
 ---
 
@@ -93,7 +99,7 @@ Go into `app\` and run `SimpleWall.exe`.
 - A second, borderless black window (the output) opens on the LED wall.
 
 **If a "SimpleWall could not start VLC" dialog appears**, that's the app's own
-error handling. Screenshot it, grab `simple-wall.log`, and **STOP** — that is a
+error handling. Screenshot it, grab today's log from `logs\`, and **STOP** — that is a
 complete, valid (if unwelcome) result.
 
 - [ ] **Acceptance: launches on Win7 SP1 x64 with no missing-runtime error.**
@@ -165,7 +171,7 @@ re-tick — that means an older copy is registered.)
 
 ## 11. Bring back
 
-- `simple-wall.log` (from the folder named in the title bar)
+- today's log from `logs\` (the folder named in the title bar)
 - the filled-in `acceptance.md`
 - a photo of the wall running, if you can
 

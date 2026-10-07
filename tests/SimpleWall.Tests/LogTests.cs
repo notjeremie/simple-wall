@@ -8,9 +8,10 @@ using Xunit;
 namespace SimpleWall.Tests
 {
     /// <summary>
-    /// The log is the only witness to what happens on the wall PC at 3am. These tests are about
-    /// the two ways it could stop being one: by throwing (and taking the wall with it) and by
-    /// growing until it fills the disk.
+    /// The log is the only witness to what happens on the wall PC at 3am. These tests are about the
+    /// ways it could stop being one: by throwing (and taking the wall with it), by growing until it
+    /// fills the disk, and -- the reason the roll was replaced by a file per day -- by deleting the
+    /// evidence of the thing you are trying to understand.
     /// </summary>
     public class LogTests : IDisposable
     {
@@ -27,8 +28,19 @@ namespace SimpleWall.Tests
             try { Directory.Delete(_directory, recursive: true); } catch { }
         }
 
-        private Log NewLog(long maxBytes = Log.DefaultMaxBytes) =>
-            new Log(_directory, "test.log", maxBytes);
+        private Log NewLog(int retentionDays = Log.DefaultRetentionDays) =>
+            new Log(_directory, "test.log", retentionDays);
+
+        private string LogsFolder => Path.Combine(_directory, Log.FolderName);
+
+        /// <summary>Plants a day-file as if the app had run that day.</summary>
+        private string PlantDay(Log log, DateTime day, string content = "old line")
+        {
+            Directory.CreateDirectory(LogsFolder);
+            var path = log.PathFor(day);
+            File.WriteAllText(path, content + Environment.NewLine);
+            return path;
+        }
 
         [Fact]
         public void WritesATimestampedLine()
@@ -54,87 +66,156 @@ namespace SimpleWall.Tests
         }
 
         /// <summary>
-        /// The whole reason this class exists. Below the ceiling nothing moves.
+        /// The shape of the whole change: a folder, and a file named for its day in ISO order so
+        /// the folder sorts chronologically.
         /// </summary>
         [Fact]
-        public void DoesNotRollBelowTheCeiling()
+        public void WritesIntoADatedFileInALogsFolder()
         {
-            var log = NewLog(maxBytes: 10_000);
+            var log = NewLog();
 
-            for (var i = 0; i < 20; i++) log.Write(new string('x', 100));
+            log.Write("today");
 
-            Assert.True(new FileInfo(log.Path).Length < 10_000);
-            Assert.False(File.Exists(log.PreviousPath));
-        }
-
-        [Fact]
-        public void RollsAtTheCeilingAndKeepsTheOldLinesInTheBackup()
-        {
-            var log = NewLog(maxBytes: 2_000);
-
-            for (var i = 0; i < 20; i++) log.Write("line " + i + " " + new string('x', 100));
-
-            Assert.True(File.Exists(log.PreviousPath), "the rolled-out file should exist");
-            Assert.Contains("line 0", File.ReadAllText(log.PreviousPath));
-
-            // The live file restarted, so it holds the tail rather than the head.
-            var live = File.ReadAllText(log.Path);
-            Assert.DoesNotContain("line 0 ", live);
-            Assert.Contains("line 19", live);
+            Assert.Equal(Path.Combine(_directory, "logs"), log.LogDirectory);
+            Assert.Equal(Path.Combine(LogsFolder, "test-" + DateTime.Now.ToString("yyyy-MM-dd") + ".log"), log.Path);
+            Assert.True(File.Exists(log.Path));
         }
 
         /// <summary>
-        /// Two files, not two hundred. A roll that kept every generation would fill the disk of a
-        /// machine expected to run for months just as surely as never rolling at all.
+        /// config.json lives in Directory (see Program). If this ever starts pointing at the logs
+        /// folder, the wall silently loses every clip and schedule it has.
         /// </summary>
         [Fact]
-        public void KeepsExactlyOneBackup()
+        public void TheAppDirectoryIsNotTheLogFolder()
         {
-            var log = NewLog(maxBytes: 1_000);
+            var log = NewLog();
 
-            for (var i = 0; i < 200; i++) log.Write(new string('x', 200));
-
-            var files = Directory.GetFiles(_directory).Select(Path.GetFileName).OrderBy(f => f).ToArray();
-            Assert.Equal(new[] { "test.1.log", "test.log" }, files);
+            Assert.Equal(_directory, log.Directory);
+            Assert.NotEqual(log.Directory, log.LogDirectory);
         }
 
+        /// <summary>Yesterday's lines stay in yesterday's file. That is the entire point.</summary>
         [Fact]
-        public void TotalSizeStaysBoundedAtRoughlyTwiceTheCeiling()
+        public void EachDayIsItsOwnFile()
         {
-            var log = NewLog(maxBytes: 5_000);
+            var log = NewLog();
+            var yesterday = PlantDay(log, DateTime.Now.AddDays(-1), "yesterday's evidence");
 
-            for (var i = 0; i < 500; i++) log.Write(new string('x', 200));
+            log.Write("today's line");
 
-            var total = new FileInfo(log.Path).Length + new FileInfo(log.PreviousPath).Length;
-
-            // One line of slack: the ceiling is checked before a write, so the file that rolls is
-            // always at most maxBytes plus the line that tipped it over.
-            Assert.True(total <= 2 * 5_000 + 300, $"log grew to {total} bytes");
+            Assert.Contains("yesterday's evidence", File.ReadAllText(yesterday));
+            Assert.DoesNotContain("today's line", File.ReadAllText(yesterday));
+            Assert.Contains("today's line", File.ReadAllText(log.Path));
         }
 
         /// <summary>
-        /// The roll is a rename, and File.Move needs DELETE access -- which our own writers do not
-        /// share. Anything holding the file open (someone tailing it over VNC, most likely) stops
-        /// the rename. The line must still be written: an oversized log is a nuisance, a missing
-        /// line is the evidence.
+        /// The old 5MB roll would discard the record of a rare incident. Nothing here has a size
+        /// ceiling, so a big day stays whole.
         /// </summary>
         [Fact]
-        public void AReaderHoldingTheFileOpenBlocksTheRollButNotTheWrite()
+        public void ThereIsNoSizeCeilingWithinADay()
         {
-            var log = NewLog(maxBytes: 500);
-            log.Write(new string('x', 600)); // over the ceiling: the next write wants to roll
+            var log = NewLog();
 
-            // ReadWrite, the way a real tail opens it: it permits our append (which needs write
-            // access) but not the roll's File.Move, which opens the source for DELETE and no
-            // sharer here grants Delete. That gap is the whole point -- the line survives a roll
-            // that can't happen.
-            using (File.Open(log.Path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-            {
-                log.Write("written anyway");
-            }
+            for (var i = 0; i < 500; i++) log.Write("line " + i + " " + new string('x', 200));
 
-            Assert.False(File.Exists(log.PreviousPath), "the roll could not happen");
-            Assert.Contains("written anyway", File.ReadAllText(log.Path));
+            var lines = File.ReadAllLines(log.Path);
+            Assert.Equal(500, lines.Length);
+            Assert.Contains("line 0 ", lines[0]);
+            Assert.Contains("line 499 ", lines[499]);
+        }
+
+        [Fact]
+        public void SweepDeletesFilesPastTheRetentionWindow()
+        {
+            var log = NewLog(retentionDays: 30);
+            var ancient = PlantDay(log, DateTime.Now.AddDays(-90));
+            var stale = PlantDay(log, DateTime.Now.AddDays(-31));
+
+            var deleted = log.Sweep();
+
+            Assert.Equal(2, deleted);
+            Assert.False(File.Exists(ancient));
+            Assert.False(File.Exists(stale));
+        }
+
+        [Fact]
+        public void SweepKeepsFilesInsideTheRetentionWindow()
+        {
+            var log = NewLog(retentionDays: 30);
+            var recent = PlantDay(log, DateTime.Now.AddDays(-29));
+            var today = PlantDay(log, DateTime.Now);
+
+            log.Sweep();
+
+            Assert.True(File.Exists(recent));
+            Assert.True(File.Exists(today));
+        }
+
+        /// <summary>
+        /// The one that matters most in this file. Sweep is the only code in the app that deletes
+        /// anything, it runs unattended, and it runs in a folder a human may have dropped things
+        /// into. The wildcard matches these names; the date parse is what saves them.
+        /// </summary>
+        [Fact]
+        public void SweepNeverDeletesAnythingItCannotDate()
+        {
+            var log = NewLog(retentionDays: 1);
+            Directory.CreateDirectory(LogsFolder);
+
+            var notes = Path.Combine(LogsFolder, "test-notes.log");
+            var empty = Path.Combine(LogsFolder, "test-.log");
+            var nearly = Path.Combine(LogsFolder, "test-2026-8-4.log");   // not zero-padded ISO
+            var other = Path.Combine(LogsFolder, "something-else.txt");
+            foreach (var f in new[] { notes, empty, nearly, other }) File.WriteAllText(f, "keep me");
+
+            var deleted = log.Sweep();
+
+            Assert.Equal(0, deleted);
+            Assert.All(new[] { notes, empty, nearly, other }, f => Assert.True(File.Exists(f), f + " was deleted"));
+        }
+
+        /// <summary>
+        /// This machine's clock is known to leap -- a flat CMOS battery boots it in 2019 and
+        /// w32time corrects it later (see TickGuard). While it is wrong-and-early, every real file
+        /// looks like it is in the future, and must be kept rather than swept.
+        /// </summary>
+        [Fact]
+        public void SweepKeepsFilesFromTheFutureWhenTheClockIsWrong()
+        {
+            var log = NewLog(retentionDays: 30);
+            var future = PlantDay(log, DateTime.Now.AddYears(7));
+
+            log.Sweep();
+
+            Assert.True(File.Exists(future));
+        }
+
+        /// <summary>
+        /// The wall PC's old single simple-wall.log sits in the app directory and holds the record
+        /// of the 07-30 hang. Sweep works inside the logs folder and must never reach up to it.
+        /// </summary>
+        [Fact]
+        public void SweepNeverTouchesAnythingOutsideTheLogsFolder()
+        {
+            var log = NewLog(retentionDays: 1);
+            var legacy = Path.Combine(_directory, "test.log");
+            var config = Path.Combine(_directory, "config.json");
+            File.WriteAllText(legacy, "the 07-30 evidence");
+            File.WriteAllText(config, "{}");
+
+            log.Sweep();
+
+            Assert.True(File.Exists(legacy), "the pre-existing log was deleted");
+            Assert.True(File.Exists(config), "config.json was deleted");
+        }
+
+        [Fact]
+        public void SweepOnAnAbsentFolderIsHarmless()
+        {
+            var log = NewLog();
+
+            Assert.Equal(0, log.Sweep());
         }
 
         /// <summary>
@@ -144,7 +225,10 @@ namespace SimpleWall.Tests
         [Fact]
         public void NeverThrows()
         {
-            var log = new Log(Path.Combine(_directory, "gone"), "test.log");
+            // A path no directory can be created at: a file where a folder would have to go.
+            var blocker = Path.Combine(_directory, "blocker");
+            File.WriteAllText(blocker, "not a directory");
+            var log = new Log(blocker, "test.log");
 
             var ex = Record.Exception(() => log.Write("into the void"));
 
@@ -188,43 +272,40 @@ namespace SimpleWall.Tests
         }
 
         /// <summary>
-        /// Rolling under concurrent load is the case the gate exists for: without it, a writer
-        /// opens the path by name while another is renaming it, and a line lands in a file being
-        /// moved out from under it.
-        ///
-        /// The ceiling is chosen so the ~66KB of output rolls EXACTLY ONCE -- big enough that the
-        /// current file never refills to the ceiling again. Only then does "across a roll, lose
-        /// nothing" have a checkable meaning: a second roll would discard the first generation on
-        /// purpose (two files, ~10MB cap -- see KeepsExactlyOneBackup), and asserting no loss
-        /// against that would be asserting the design is a bug.
+        /// A crash stack is far larger than a StreamWriter buffer, so one WriteCrash is several
+        /// WriteFile calls. Without the gate, two of them at once interleave into a torn stack --
+        /// which is the reason the lock survived the removal of the roll it was originally for.
         /// </summary>
         [Fact]
-        public void ConcurrentWritersAcrossASingleRollLoseNothing()
+        public void ConcurrentCrashStacksDoNotInterleave()
         {
-            var log = NewLog(maxBytes: 40_000);
-            const int writers = 8, each = 100;
+            var log = NewLog();
+            Exception thrown;
+            try { throw new InvalidOperationException("libvlc said no " + new string('y', 4000)); }
+            catch (Exception ex) { thrown = ex; }
 
-            Parallel.For(0, writers, w =>
-            {
-                for (var i = 0; i < each; i++) log.Write($"writer {w} line {i} " + new string('x', 40));
-            });
+            Parallel.For(0, 8, _ => log.WriteCrash("AppDomain.UnhandledException", thrown));
 
-            Assert.True(File.Exists(log.PreviousPath), "the run should have rolled once");
-            var total = File.ReadAllLines(log.Path).Length + File.ReadAllLines(log.PreviousPath).Length;
-            Assert.Equal(writers * each, total);
+            // Every line begins with a stamp or is a stack continuation -- never a stamp spliced
+            // into the middle of another writer's stack.
+            var lines = File.ReadAllLines(log.Path);
+            Assert.Equal(8, lines.Count(l => l.Contains("CRASH via")));
+            Assert.All(lines.Where(l => l.Contains("CRASH via")),
+                l => Assert.Matches(@"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} CRASH via ", l));
         }
 
         /// <summary>
-        /// "simple-wall.log" rolls to "simple-wall.1.log", so both sort together and both still
-        /// look like a log to whoever goes looking for one.
+        /// Open() is what production calls, and it must leave ActiveLogDirectory pointing at the
+        /// APP directory -- config.json is resolved from it -- not at the logs folder.
         /// </summary>
         [Fact]
-        public void TheBackupSitsNextToTheLogAndKeepsTheExtension()
+        public void OpenLeavesTheConfigDirectoryPointingAtTheAppFolder()
         {
-            var log = new Log(_directory);
+            var log = Log.Open();
 
-            Assert.Equal(Path.Combine(_directory, "simple-wall.log"), log.Path);
-            Assert.Equal(Path.Combine(_directory, "simple-wall.1.log"), log.PreviousPath);
+            Assert.Equal(log.Directory, LogPaths.ActiveLogDirectory);
+            Assert.Equal(Path.Combine(log.Directory, "logs"), log.LogDirectory);
+            Assert.True(Directory.Exists(log.LogDirectory), "Open should have created the logs folder");
         }
     }
 }

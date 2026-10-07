@@ -62,6 +62,41 @@ namespace SimpleWall.Tests
             }
         }
 
+        /// <summary>
+        /// A still is scaled, not decoded through libvlc -- and the source file must not be
+        /// left locked, or overwriting the image on the share fails with "file in use".
+        /// </summary>
+        [Fact]
+        public async Task AnImageIsThumbnailedAndLeftUnlocked()
+        {
+            var image = TestImages.SolidPng(Path.Combine(_dir, "src"), Color.Red);
+
+            var png = await _cache.GetAsync(image);
+
+            Assert.NotNull(png);
+            using (var bitmap = new Bitmap(png))
+            {
+                Assert.Equal(ThumbnailCache.Width, bitmap.Width);
+                Assert.Equal(ThumbnailCache.Height, bitmap.Height);
+
+                var centre = bitmap.GetPixel(bitmap.Width / 2, bitmap.Height / 2);
+                Assert.True(centre.R > 200 && centre.G < 60 && centre.B < 60, $"expected red, got {centre}");
+            }
+
+            File.Delete(image);
+            Assert.False(File.Exists(image));
+        }
+
+        [Fact]
+        public async Task AnUnreadableImageIsNullRatherThanAnException()
+        {
+            Directory.CreateDirectory(_dir);
+            var junk = Path.Combine(_dir, "not-really-an-image.png");
+            File.WriteAllText(junk, "this is not a png");
+
+            Assert.Null(await _cache.GetAsync(junk));
+        }
+
         [Fact]
         public async Task SecondCallIsServedFromDiskWithoutReExtracting()
         {

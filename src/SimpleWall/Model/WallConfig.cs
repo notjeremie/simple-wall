@@ -35,6 +35,27 @@ namespace SimpleWall.Model
         // is left dark and the reason is logged, never guessed.
         public int DefaultSlot { get; set; }
 
+        // Seconds of UI-thread silence before the watchdog restarts the app; 0 switches it off.
+        // See Infrastructure/WatchdogPolicy for the 2026-07-30 hang this answers. Absent from an
+        // older config.json, so an existing install picks this default up and is protected without
+        // anyone editing anything.
+        //
+        // Two minutes, i.e. 120 beats of a one-second heartbeat, and the size is deliberate. The
+        // two error cases are nothing like each other: noticing late costs a couple of extra
+        // minutes on a wall that was already stuck, while a false positive restarts a wall that
+        // was working, mid-programme, for no reason.
+        //
+        // 120 rather than 60 because of where the clips live. They are on a network share
+        // (V:\VIZRT\...), and VlcWallEngine.PlayClip calls File.Exists on that path ON THE UI
+        // THREAD -- against a share that has dropped, one such call can block for tens of seconds
+        // before it returns false. Two of them in a single scheduler tick would clear 60s and
+        // restart a wall whose only problem was a slow file server.
+        //
+        // Configurable, not a constant, for the case this cannot anticipate: if it ever does
+        // restart a healthy wall, whoever is standing in front of it needs to be able to switch it
+        // off in config.json without waiting for a rebuild.
+        public int WatchdogSeconds { get; set; } = 120;
+
         // There is deliberately no Autostart field here. Autostart is an HKCU\...\Run value, and
         // the registry is the ONLY thing that decides whether Windows launches this app -- a bool
         // in here could only ever be a second opinion. It would disagree with the truth the first

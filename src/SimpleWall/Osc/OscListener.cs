@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
 using Rug.Osc;
@@ -67,6 +68,7 @@ namespace SimpleWall.Osc
             try
             {
                 _client = new UdpClient(_port);
+                DoNotLeakToChildProcesses(_client);
             }
             catch (SocketException ex)
             {
@@ -83,6 +85,42 @@ namespace SimpleWall.Osc
             _thread.Start();
             _log($"OSC listening on port {BoundPort}");
             return true;
+        }
+
+        private const uint HANDLE_FLAG_INHERIT = 0x00000001;
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool SetHandleInformation(IntPtr hObject, uint dwMask, uint dwFlags);
+
+        /// <summary>
+        /// Clears the inherit flag on the UDP socket, so no process this app ever launches can end
+        /// up holding the OSC port.
+        ///
+        /// Measured on the wall PC on 2026-08-04, during the watchdog's first end-to-end test.
+        /// Every watchdog-restarted instance came up with "OSC port 7000 could not be opened
+        /// (AddressAlreadyInUse)" and stayed that way until the app was started by hand. The wall,
+        /// the schedule and the mouse all worked; the Stream Deck was simply dead.
+        ///
+        /// Windows creates socket handles INHERITABLE by default, and Process.Start with
+        /// UseShellExecute=false calls CreateProcess with bInheritHandles=true. So UiWatchdog's own
+        /// relauncher captured this socket on its way past, and handed it down the chain -- leaving
+        /// each restarted SimpleWall holding a socket it never opened and unable to bind the port
+        /// it needs. The single-instance mutex was released correctly at every restart, which is
+        /// what pins the cause: .NET creates mutex handles NON-inheritable, sockets inheritable, and
+        /// only the inheritable one survived.
+        ///
+        /// Fixed here, at the socket, rather than at the one call site that spawns a child today.
+        /// The leak is a property of this handle, not of that caller, and the next thing to launch
+        /// a process would have rediscovered it the hard way -- at 3am, on a wall whose remote
+        /// control had silently stopped answering.
+        ///
+        /// Best effort: a wall with remote control that MIGHT leak beats a wall that refuses to
+        /// listen at all, so a failure here is swallowed exactly like the rest of this class's.
+        /// </summary>
+        private static void DoNotLeakToChildProcesses(UdpClient client)
+        {
+            try { SetHandleInformation(client.Client.Handle, HANDLE_FLAG_INHERIT, 0); }
+            catch { /* older/oddly-configured Windows: the leak is a risk, refusing to listen is a certainty */ }
         }
 
         private void ReceiveLoop()

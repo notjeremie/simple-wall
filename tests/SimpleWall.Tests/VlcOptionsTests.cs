@@ -54,6 +54,16 @@ namespace SimpleWall.Tests
                 "would be unreachable -- re-check why it is here before deleting it.");
         }
 
+        /// <summary>
+        /// Without it a still "ends" every 10 seconds and is re-opened by :input-repeat.
+        /// LibVlcContractTests proves libvlc honours it; this proves we still send it.
+        /// </summary>
+        [Fact]
+        public void StillImagesNeverEnd()
+        {
+            Assert.Contains(":image-duration=-1", VlcOptions.Media());
+        }
+
         [Fact]
         public void DecoderIsNamedUpFrontToSkipTheFailedD3D11Attempt()
         {
